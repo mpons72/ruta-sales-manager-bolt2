@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "name": "RutaVenta",
+  "description": "Control de ventas en ruta — funciona 100% sin internet",
+  "localStorageBucket": {
+    "enabled": true,
+    "keys": ["ruta-ventas-v1", "ruta-ventas-v2"]
+  },
+  "offline": {
+    "enabled": true,
+    "strategy": "cache-first",
+    "fallback": "/",
+    "precache": [
+      "/",
+      "/ruta",
+      "/reporte",
+      "/clientes",
+      "/configuracion"
+    ],
+    "runtimeCache": [
+      {
+        "urlPattern": ".*\\.(?:js|css|woff2?|ttf|otf|png|jpg|jpeg|svg|webp|ico)$",
+        "strategy": "cache-first",
+        "cacheName": "static-assets"
+      },
+      {
+        "urlPattern": "^https?://.*",
+        "strategy": "network-first",
+        "cacheName": "pages",
+        "networkTimeoutSeconds": 3
+      }
+    ]
+  }
+}
