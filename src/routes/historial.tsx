@@ -329,7 +329,8 @@ function HistorialPage() {
                 surtido: {},
                 devolucion: {},
                 paymentType: "cash",
-                existenceAnterior: {},
+                existenciaAnterior: {},
+                existenciaActual: {},
                 notes: "",
               };
               
@@ -353,7 +354,7 @@ function HistorialPage() {
               for (const [pid, qtyStr] of Object.entries(productAntes)) {
                 const qty = parseInt(qtyStr, 10) || 0;
                 if (qty >= 0) {
-                  sale.existenceAnterior[pid] = qty;
+                  sale.existenciaAnterior[pid] = qty;
                 }
               }
               
