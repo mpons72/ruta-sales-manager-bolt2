@@ -317,6 +317,32 @@ function HistorialPage() {
             const routeClients = allClients.filter((c) => c.routeId === addSaleFor.routeId && c.active !== false);
             const clientsWithoutSale = routeClients.filter((c) => !addSaleFor.sales?.[c.id]?.completed);
             
+            const handleClientChange = (clientId: string) => {
+              setSelectedClientId(clientId);
+              if (clientId && addSaleFor?.sales?.[clientId]) {
+                const draft = addSaleFor.sales[clientId];
+                const antes: Record<string, string> = {};
+                for (const [pid, qty] of Object.entries(draft.existenciaAnterior ?? {})) {
+                  if (qty > 0) antes[pid] = String(qty);
+                }
+                setProductAntes(antes);
+                const surtido: Record<string, string> = {};
+                for (const [pid, qty] of Object.entries(draft.surtido ?? {})) {
+                  if (qty > 0) surtido[pid] = String(qty);
+                }
+                setProductQuantities(surtido);
+                const dev: Record<string, string> = {};
+                for (const [pid, qty] of Object.entries(draft.devolucion ?? {})) {
+                  if (qty > 0) dev[pid] = String(qty);
+                }
+                setProductDevoluciones(dev);
+              } else {
+                setProductAntes({});
+                setProductQuantities({});
+                setProductDevoluciones({});
+              }
+            };
+
             const handleAddSale = () => {
               if (!selectedClientId) {
                 toast.error("Selecciona un cliente");
@@ -329,7 +355,8 @@ function HistorialPage() {
                 surtido: {},
                 devolucion: {},
                 paymentType: "cash",
-                existenceAnterior: {},
+                existenciaAnterior: {},
+                existenciaActual: {},
                 notes: "",
               };
               
@@ -353,7 +380,7 @@ function HistorialPage() {
               for (const [pid, qtyStr] of Object.entries(productAntes)) {
                 const qty = parseInt(qtyStr, 10) || 0;
                 if (qty >= 0) {
-                  sale.existenceAnterior[pid] = qty;
+                  sale.existenciaAnterior[pid] = qty;
                 }
               }
               
@@ -376,7 +403,7 @@ function HistorialPage() {
                   <label className="text-sm font-medium">Cliente faltante</label>
                   <select
                     value={selectedClientId}
-                    onChange={(e) => setSelectedClientId(e.target.value)}
+                    onChange={(e) => handleClientChange(e.target.value)}
                     className="w-full mt-1 p-2 border rounded-md"
                   >
                     <option value="">-- Seleccionar cliente --</option>
