@@ -196,8 +196,15 @@ async function performBackup(silent = false): Promise<boolean> {
 export function ScheduledBackupCard() {
   const [cfg, setCfg] = useState<Schedule>(() => (typeof window === "undefined" ? defaults : loadCfg()));
   const [hasDir, setHasDir] = useState(false);
-  const [permissions, setPermissions] = useState({ notifications: false, storage: false });
+  const [permissions, setPermissions] = useState({
+    notifications: false,
+    storage: false,
+    battery: false,
+    alarm: false,
+  });
   const [requestingPerms, setRequestingPerms] = useState(false);
+  const [customPath, setCustomPath] = useState<string>("");
+  const [editingPath, setEditingPath] = useState(false);
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
 
@@ -209,8 +216,17 @@ export function ScheduledBackupCard() {
     if (!Capacitor.isNativePlatform()) {
       idbGet<DirHandle>("dir").then((h) => setHasDir(!!h)).catch(() => {});
     } else {
-      // En nativo, asumimos que tenemos acceso al directorio de documentos
-      setHasDir(true);
+      // En nativo, cargar ruta personalizada si existe
+      BackupScheduler.getCustomBackupPath().then((result) => {
+        if (result.path) {
+          setCustomPath(result.path);
+          setHasDir(true);
+        } else {
+          setHasDir(true); // Asumimos Documentos por defecto
+        }
+      }).catch(() => {
+        setHasDir(true);
+      });
     }
   }, []);
 
@@ -287,9 +303,26 @@ export function ScheduledBackupCard() {
   };
 
   const clearFolder = async () => {
-    await idbSet("dir", null);
-    setHasDir(false);
-    toast.success("Se quitó la carpeta. Los respaldos se descargarán normalmente.");
+    if (Capacitor.isNativePlatform()) {
+      await BackupScheduler.setCustomBackupPath({ path: "" });
+      setCustomPath("");
+      toast.success("Se usará la carpeta Documentos por defecto");
+    } else {
+      await idbSet("dir", null);
+      setHasDir(false);
+      toast.success("Se quitó la carpeta. Los respaldos se descargarán normalmente.");
+    }
+  };
+
+  const saveCustomPath = async () => {
+    if (!Capacitor.isNativePlatform()) return;
+    try {
+      await BackupScheduler.setCustomBackupPath({ path: customPath });
+      setEditingPath(false);
+      toast.success("Ruta de respaldo actualizada");
+    } catch (error) {
+      toast.error("Error al guardar la ruta: " + (error as Error).message);
+    }
   };
 
   const requestPermissions = async () => {
@@ -358,25 +391,109 @@ export function ScheduledBackupCard() {
           <div className="flex items-center justify-between">
             <span>Almacenamiento:</span>
             <span className={permissions.storage ? "text-green-600 font-semibold" : "text-red-600"}>
-              {permissions.storage ? "✓ Concedido" : "✗ Denegado"}
+              {permissions.storage ? "✓ Concedido" : "✗ Requerido"}
             </span>
           </div>
+          <div className="flex items-center justify-between gap-2">
+            <span>Sin optimización batería:</span>
+            <div className="flex items-center gap-1">
+              <span className={permissions.battery ? "text-green-600 font-semibold" : "text-red-600"}>
+                {permissions.battery ? "✓ Concedido" : "✗ Requerido"}
+              </span>
+              {!permissions.battery && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const BackupScheduler = (await import('@/lib/BackupSchedulerPlugin')).default;
+                      await BackupScheduler.openBatteryOptimizationSettings();
+                      setTimeout(() => checkAllPermissions().then(setPermissions), 2000);
+                    } catch (e) { toast.error('No se pudo abrir ajustes'); }
+                  }}
+                  className="text-[10px] text-primary underline"
+                >
+                  Configurar
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span>Alarmas exactas:</span>
+            <div className="flex items-center gap-1">
+              <span className={permissions.alarm ? "text-green-600 font-semibold" : "text-red-600"}>
+                {permissions.alarm ? "✓ Concedido" : "✗ Requerido"}
+              </span>
+              {!permissions.alarm && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const BackupScheduler = (await import('@/lib/BackupSchedulerPlugin')).default;
+                      await BackupScheduler.openExactAlarmSettings();
+                      setTimeout(() => checkAllPermissions().then(setPermissions), 2000);
+                    } catch (e) { toast.error('No se pudo abrir ajustes'); }
+                  }}
+                  className="text-[10px] text-primary underline"
+                >
+                  Configurar
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-        {!permissions.notifications || !permissions.storage ? (
+
+        <div className="mt-3 space-y-1">
+          {!permissions.notifications || !permissions.storage ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={requestPermissions}
+              disabled={requestingPerms}
+            >
+              {requestingPerms ? "Solicitando..." : "Solicitar permisos básicos"}
+            </Button>
+          ) : null}
+
           <Button
             size="sm"
             variant="outline"
-            className="mt-2 w-full"
-            onClick={requestPermissions}
-            disabled={requestingPerms}
+            className="w-full"
+            onClick={async () => {
+              try {
+                const BackupScheduler = (await import('@/lib/BackupSchedulerPlugin')).default;
+                await BackupScheduler.openMiuiAutostartSettings();
+                toast.info('Busca SalsaRuta y activa el autostart');
+              } catch (e) {
+                toast.error('Abre Seguridad MIUI > Permisos > Autostart manualmente');
+              }
+            }}
           >
-            {requestingPerms ? "Solicitando..." : "Solicitar permisos"}
+            Configurar Autostart (Xiaomi)
           </Button>
-        ) : (
-          <div className="mt-2 text-xs text-green-600 font-medium">
-            ✓ Todos los permisos concedidos
-          </div>
-        )}
+
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full"
+            onClick={async () => {
+              try {
+                const BackupScheduler = (await import('@/lib/BackupSchedulerPlugin')).default;
+                await BackupScheduler.openMiuiBatterySettings();
+                toast.info('Selecciona "Sin restricciones" para SalsaRuta');
+              } catch (e) {
+                toast.error('Abre Ajustes > Batería > Ahorro de batería manualmente');
+              }
+            }}
+          >
+            Configurar Batería MIUI (Sin restricciones)
+          </Button>
+
+          {permissions.notifications && permissions.storage && 
+           permissions.battery && permissions.alarm ? (
+            <div className="mt-2 text-xs text-green-600 font-medium text-center">
+              ✓ Todos los permisos concedidos
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {/* Carpeta de destino */}
@@ -386,9 +503,48 @@ export function ScheduledBackupCard() {
             <FolderCheck className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold">Ubicación de respaldo</span>
           </div>
-          <p className="text-xs text-muted-foreground mb-3">
-            Los respaldos se guardarán automáticamente en la carpeta <strong>Documentos</strong> de tu dispositivo Android.
-          </p>
+          {editingPath ? (
+            <div className="space-y-2">
+              <Input
+                type="text"
+                value={customPath}
+                onChange={(e) => setCustomPath(e.target.value)}
+                placeholder="/storage/emulated/0/Documents"
+                className="text-sm"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={saveCustomPath} className="flex-1">
+                  Guardar
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setEditingPath(false)}>
+                  Cancelar
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Ejemplo: /storage/emulated/0/Download o /storage/emulated/0/Documents/SalsaRuta
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {customPath ? (
+                  <>Ruta personalizada: <strong className="text-foreground">{customPath}</strong></>
+                ) : (
+                  <>Los respaldos se guardarán en la carpeta <strong>Documentos</strong> de tu dispositivo Android.</>
+                )}
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setEditingPath(true)}>
+                  {customPath ? "Cambiar ruta" : "Personalizar ruta"}
+                </Button>
+                {customPath && (
+                  <Button size="sm" variant="ghost" onClick={clearFolder}>
+                    Usar Documentos
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="rounded-lg border bg-muted/50 p-3">
@@ -533,7 +689,8 @@ export function ScheduledBackupCard() {
           variant={cfg.enabled ? "destructive" : "default"}
           className="flex-1"
           onClick={() => {
-            if (!cfg.enabled && (!permissions.notifications || !permissions.storage)) {
+            if (!cfg.enabled && (!permissions.notifications || !permissions.storage || 
+                !permissions.battery || !permissions.alarm)) {
               toast.error("Primero concede los permisos necesarios");
               return;
             }

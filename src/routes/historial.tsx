@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { actions, useStore, clientSaleAmount, type HistoryEntry, type ClientSale } from "@/lib/store";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { actions, useStore, clientSaleAmount, getLastSaleForClient, type HistoryEntry, type ClientSale } from "@/lib/store";
 import { AdminPasswordPrompt } from "@/components/AdminPasswordPrompt";
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { RemisionData } from "@/lib/remision";
@@ -37,6 +38,7 @@ function HistorialPage() {
   const products = useStore((s) => s.products);
   const allClients = useStore((s) => s.clients);
   const audit = useStore((s) => s.audit);
+  const hasActiveRoute = useStore((s) => s.active !== null);
 
   const [pending, setPending] = useState<Pending | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -51,6 +53,9 @@ function HistorialPage() {
   const [productDevoluciones, setProductDevoluciones] = useState<Record<string, string>>({});
   const [productAntes, setProductAntes] = useState<Record<string, string>>({});
   const [addSalePassword, setAddSalePassword] = useState(false);
+  
+  // Estado para filtro por ruta
+  const [selectedRouteId, setSelectedRouteId] = useState<string>("all");
 
   const totalsFor = (h: HistoryEntry) => {
     let total = 0;
@@ -62,6 +67,11 @@ function HistorialPage() {
     }
     return { total, visits };
   };
+
+  // Filtrar historial por ruta (incluir rutas temporales cuando se selecciona "all")
+  const filteredHistory = selectedRouteId === "all"
+    ? history
+    : history.filter(h => h.routeId === selectedRouteId && !h.temporary && h.routeId !== "__tmp__");
 
   const confirmAction = () => {
     if (!pending) return;
@@ -95,18 +105,46 @@ function HistorialPage() {
           </p>
         </div>
 
-        {history.length === 0 && (
+        {/* Filtro por ruta */}
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Filtrar por ruta:</label>
+          <Select value={selectedRouteId} onValueChange={setSelectedRouteId}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Todas las rutas" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las rutas</SelectItem>
+              {routes.map((r) => {
+                // Obtener fechas de visita para esta ruta
+                const routeDates = history
+                  .filter(h => h.routeId === r.id)
+                  .map(h => new Date(h.date).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }));
+                const uniqueDates = [...new Set(routeDates)].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+                const dateText = uniqueDates.length > 0 ? ` (${uniqueDates.join(", ")})` : "";
+                return (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name}{dateText}
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {filteredHistory.length === 0 && (
           <Card className="p-6 text-center text-sm text-muted-foreground">
-            Aún no hay rutas en el historial.
+            {selectedRouteId === "all" ? "Aún no hay rutas en el historial." : "No hay registros para esta ruta."}
           </Card>
         )}
 
         <div className="space-y-3">
-          {history.map((h) => {
+          {filteredHistory.map((h) => {
             const route = routes.find((r) => r.id === h.routeId);
             const { total, visits } = totalsFor(h);
             const date = new Date(h.date);
             const isEditing = editingId === h.endedAt;
+            const isTemporary = h.temporary || h.routeId === "__tmp__";
+            const routeName = isTemporary ? (h.label || "Venta fuera de ruta") : (route?.name || "Ruta desconocida");
             return (
               <Card key={h.endedAt} className="p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
@@ -143,7 +181,7 @@ function HistorialPage() {
                     ) : (
                       <>
                         <div className="text-lg font-extrabold break-words">
-                          {h.label ?? route?.name ?? "Ruta"}
+                          {routeName}
                         </div>
                         <div className="mt-1 text-sm text-muted-foreground">
                           {date.toLocaleDateString("es-MX", {
@@ -252,7 +290,7 @@ function HistorialPage() {
           pending?.kind === "delete"
             ? "Esta acción no se puede deshacer. Confirma con la contraseña de administrador."
             : pending?.kind === "addSale"
-            ? "Confirma la contraseña de administrador para agregar la venta faltante."
+            ? "Esta corrección se aplicará al mismo día de la ruta cerrada (mismo día detectado). Confirma con la contraseña de administrador."
             : "Ingresa la contraseña de administrador para guardar los cambios."
         }
         onConfirm={confirmAction}
@@ -322,52 +360,74 @@ function HistorialPage() {
                 toast.error("Selecciona un cliente");
                 return;
               }
-              
-              // Crear venta vacía
-              const sale: ClientSale = {
-                completed: true,
-                surtido: {},
-                devolucion: {},
-                paymentType: "cash",
-                existenceAnterior: {},
-                notes: "",
-              };
-              
-              // Agregar productos seleccionados (surtido)
+
+              const surtido: Record<string, number> = {};
               for (const [pid, qtyStr] of Object.entries(productQuantities)) {
                 const qty = parseInt(qtyStr, 10) || 0;
-                if (qty > 0) {
-                  sale.surtido[pid] = qty;
-                }
+                if (qty > 0) surtido[pid] = qty;
               }
-              
-              // Agregar devoluciones
+
+              const devolucion: Record<string, number> = {};
               for (const [pid, qtyStr] of Object.entries(productDevoluciones)) {
                 const qty = parseInt(qtyStr, 10) || 0;
-                if (qty > 0) {
-                  sale.devolucion[pid] = qty;
-                }
+                if (qty > 0) devolucion[pid] = qty;
               }
-              
-              // Agregar existencia anterior
+
+              const existenciaAnterior: Record<string, number> = {};
               for (const [pid, qtyStr] of Object.entries(productAntes)) {
-                const qty = parseInt(qtyStr, 10) || 0;
-                if (qty >= 0) {
-                  sale.existenceAnterior[pid] = qty;
-                }
+                const qty = parseInt(qtyStr, 10);
+                if (Number.isFinite(qty) && qty >= 0) existenciaAnterior[pid] = qty;
               }
-              
-              if (Object.keys(sale.surtido).length === 0) {
+
+              if (Object.keys(surtido).length === 0) {
                 toast.error("Agrega al menos un producto con cantidad de surtido");
                 return;
               }
-              
-              setPending({
-                kind: "addSale",
-                endedAt: addSaleFor.endedAt,
-                sale: { ...addSaleFor.sales, [selectedClientId]: sale },
-              });
-              setAddSaleFor(null);
+
+              const sale: ClientSale = {
+                completed: true,
+                surtido,
+                devolucion,
+                existenciaAnterior,
+                existenciaActual: {},
+                paymentType: "cash",
+                notes: "",
+              };
+
+              // Comparar fecha de la ruta histórica vs hoy. Si son el mismo día,
+              // se asume que la ruta se cerró por error el mismo día y se corrige
+              // directamente en ese registro histórico. Si hoy es una fecha posterior,
+              // significa que el cliente se está atendiendo durante una ruta diferente
+              // actualmente activa, y la venta + descuento de inventario debe aplicarse
+              // a esa ruta activa de HOY, no al historial viejo.
+              const historyDateStr = new Date(addSaleFor.date).toDateString();
+              const todayStr = new Date().toDateString();
+              const isSameDay = historyDateStr === todayStr;
+
+              if (isSameDay) {
+                setPending({
+                  kind: "addSale",
+                  endedAt: addSaleFor.endedAt,
+                  sale: { ...addSaleFor.sales, [selectedClientId]: sale },
+                });
+                setAddSaleFor(null);
+              } else {
+                if (!hasActiveRoute) {
+                  toast.error(
+                    "No hay una ruta activa hoy. Inicia la ruta del día actual antes de completar esta venta — así el inventario se descuenta correctamente del día de hoy."
+                  );
+                  return;
+                }
+                actions.saveClientSale(selectedClientId, sale);
+                toast.success(
+                  "Venta registrada en la ruta activa de hoy — el inventario se descontó del día actual."
+                );
+                setAddSaleFor(null);
+                setSelectedClientId("");
+                setProductQuantities({});
+                setProductDevoluciones({});
+                setProductAntes({});
+              }
             };
             
             return (
@@ -376,7 +436,25 @@ function HistorialPage() {
                   <label className="text-sm font-medium">Cliente faltante</label>
                   <select
                     value={selectedClientId}
-                    onChange={(e) => setSelectedClientId(e.target.value)}
+                    onChange={(e) => {
+                      const clientId = e.target.value;
+                      setSelectedClientId(clientId);
+                      if (clientId) {
+                        const draft = getLastSaleForClient(clientId, history);
+                        if (draft && !draft.completed && draft.existenciaAnterior) {
+                          const prefilled: Record<string, string> = {};
+                          for (const [pid, val] of Object.entries(draft.existenciaAnterior)) {
+                            prefilled[pid] = String(val);
+                          }
+                          setProductAntes(prefilled);
+                          toast.info("Se recuperaron datos de existencia capturados en campo");
+                        } else {
+                          setProductAntes({});
+                        }
+                      } else {
+                        setProductAntes({});
+                      }
+                    }}
                     className="w-full mt-1 p-2 border rounded-md"
                   >
                     <option value="">-- Seleccionar cliente --</option>
@@ -388,40 +466,82 @@ function HistorialPage() {
                 
                 {selectedClientId && (
                   <div>
-                    <label className="text-sm font-medium">Productos vendidos (Surtido / Devoluciones / Antes)</label>
+                    <label className="text-sm font-medium">Productos vendidos (Antes / Surtidas / Devoluciones / Total)</label>
                     <div className="max-h-[40vh] space-y-2 overflow-y-auto mt-1">
-                      {products.map((p) => (
-                        <div key={p.id} className="flex items-center gap-2">
-                          <span className="flex-1 text-sm">{p.name}</span>
-                          <Input
-                            type="number"
-                            min={0}
-                            value={productQuantities[p.id] ?? ""}
-                            onChange={(e) => setProductQuantities({ ...productQuantities, [p.id]: e.target.value })}
-                            className="w-16"
-                            placeholder="Surtido"
-                            title="Surtido"
-                          />
-                          <Input
-                            type="number"
-                            min={0}
-                            value={productDevoluciones[p.id] ?? ""}
-                            onChange={(e) => setProductDevoluciones({ ...productDevoluciones, [p.id]: e.target.value })}
-                            className="w-16"
-                            placeholder="Devolución"
-                            title="Devolución"
-                          />
-                          <Input
-                            type="number"
-                            min={0}
-                            value={productAntes[p.id] ?? ""}
-                            onChange={(e) => setProductAntes({ ...productAntes, [p.id]: e.target.value })}
-                            className="w-16"
-                            placeholder="Antes"
-                            title="Existencia anterior"
-                          />
-                        </div>
-                      ))}
+                      {products.map((p) => {
+                        const surtido = parseInt(productQuantities[p.id]) || 0;
+                        const devolucion = parseInt(productDevoluciones[p.id]) || 0;
+                        const total = surtido - devolucion;
+                        return (
+                          <div key={p.id} className="flex items-center gap-2">
+                            <span className="flex-1 text-sm">{p.name}</span>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={productAntes[p.id] ?? ""}
+                              onChange={(e) => setProductAntes({ ...productAntes, [p.id]: e.target.value })}
+                              className="w-16"
+                              placeholder="Antes"
+                              title="Existencia anterior"
+                            />
+                            <Input
+                              type="number"
+                              min={0}
+                              value={productQuantities[p.id] ?? ""}
+                              onChange={(e) => setProductQuantities({ ...productQuantities, [p.id]: e.target.value })}
+                              className="w-16"
+                              placeholder="Surtidas"
+                              title="Surtidas"
+                            />
+                            <Input
+                              type="number"
+                              min={0}
+                              value={productDevoluciones[p.id] ?? ""}
+                              onChange={(e) => setProductDevoluciones({ ...productDevoluciones, [p.id]: e.target.value })}
+                              className="w-16"
+                              placeholder="Devoluciones"
+                              title="Devoluciones"
+                            />
+                            <span className="w-16 text-center text-sm font-medium">{total}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 pt-2 border-t">
+                      <span className="flex-1 text-sm font-semibold">Totales</span>
+                      <span className="w-16 text-center text-sm font-semibold">
+                        {Object.values(productAntes).reduce((sum, val) => sum + (parseInt(val) || 0), 0)}
+                      </span>
+                      <span className="w-16 text-center text-sm font-semibold">
+                        {Object.values(productQuantities).reduce((sum, val) => sum + (parseInt(val) || 0), 0)}
+                      </span>
+                      <span className="w-16 text-center text-sm font-semibold">
+                        {Object.values(productDevoluciones).reduce((sum, val) => sum + (parseInt(val) || 0), 0)}
+                      </span>
+                      <span className="w-16 text-center text-sm font-semibold">
+                        {Object.values(productQuantities).reduce((sum, val) => sum + (parseInt(val) || 0), 0) - Object.values(productDevoluciones).reduce((sum, val) => sum + (parseInt(val) || 0), 0)}
+                      </span>
+                    </div>
+                    <div className="mt-3 pt-3 border-t space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-semibold">Total piezas vendidas:</span>
+                        <span className="text-sm font-bold">
+                          {Object.values(productQuantities).reduce((sum, val) => sum + (parseInt(val) || 0), 0) - Object.values(productDevoluciones).reduce((sum, val) => sum + (parseInt(val) || 0), 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-semibold">Total dinero cobrando:</span>
+                        <span className="text-sm font-bold">
+                          {currency(
+                            products.reduce((total, p) => {
+                              const surtido = parseInt(productQuantities[p.id]) || 0;
+                              const devolucion = parseInt(productDevoluciones[p.id]) || 0;
+                              const vendidas = surtido - devolucion;
+                              return total + (vendidas * p.price);
+                            }, 0)
+                          )}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )}

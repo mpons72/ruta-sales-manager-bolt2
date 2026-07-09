@@ -1,6 +1,7 @@
 package com.salsaruta.app.backup;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Environment;
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
@@ -16,9 +17,28 @@ import java.util.Locale;
 public class BackupWorker extends Worker {
 
     public static final String TEMP_FILE_NAME = "backup_pending.json";
+    private static final String PREFS_NAME = "backup_prefs";
+    private static final String KEY_CUSTOM_PATH = "custom_backup_path";
 
     public BackupWorker(@NonNull Context context, @NonNull WorkerParameters params) {
         super(context, params);
+    }
+
+    private File getBackupDirectory(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String customPath = prefs.getString(KEY_CUSTOM_PATH, null);
+        
+        if (customPath != null && !customPath.trim().isEmpty()) {
+            File customDir = new File(customPath);
+            if (customDir.exists() && customDir.isDirectory() && customDir.canWrite()) {
+                return customDir;
+            }
+        }
+        
+        // Fallback to Documents
+        File docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+        if (!docsDir.exists()) docsDir.mkdirs();
+        return docsDir;
     }
 
     @NonNull
@@ -39,10 +59,9 @@ public class BackupWorker extends Worker {
             if (data.isEmpty()) return Result.failure();
 
             String filename = generateFilename();
-            File docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
-            if (!docsDir.exists()) docsDir.mkdirs();
-
-            File outFile = new File(docsDir, filename);
+            File backupDir = getBackupDirectory(context);
+            
+            File outFile = new File(backupDir, filename);
             FileWriter writer = new FileWriter(outFile);
             writer.write(data);
             writer.flush();
@@ -50,7 +69,8 @@ public class BackupWorker extends Worker {
 
             return Result.success();
         } catch (Exception e) {
-            return Result.failure();
+            // Retry up to 3 times with exponential backoff before giving up
+            return Result.retry();
         }
     }
 

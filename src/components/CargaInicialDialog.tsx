@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { actions, useStore, productsForClients } from "@/lib/store";
-import { Lock, Unlock, ShieldAlert } from "lucide-react";
+import { Lock, Unlock, ShieldAlert, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 export function CargaInicialDialog({
@@ -147,7 +147,18 @@ export function CargaInicialDialog({
           ))}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex flex-col gap-2 sm:flex-row">
+          <Button
+            variant="outline"
+            disabled={!unlocked}
+            onClick={() => {
+              setValues(Object.fromEntries(products.map((p) => [p.id, "0"])));
+              toast.info("Todos los valores en 0");
+            }}
+            className="sm:mr-auto"
+          >
+            <RotateCcw className="mr-2 h-4 w-4" /> Todo en 0
+          </Button>
           <Button variant="outline" onClick={onClose}>
             Cerrar
           </Button>

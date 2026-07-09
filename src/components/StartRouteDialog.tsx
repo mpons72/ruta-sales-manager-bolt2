@@ -41,6 +41,22 @@ export function StartRouteDialog({
   const [unlocked, setUnlocked] = useState(false);
   const [askPwd, setAskPwd] = useState(false);
 
+  const handlePasswordConfirm = () => {
+    setUnlocked(true);
+    toast.success("Edición desbloqueada");
+    setAskPwd(false);
+  };
+
+  const handleDialogOpenChange = (open: boolean) => {
+    if (!open && askPwd) {
+      // Prevenir que el diálogo principal se cierre mientras el diálogo de contraseña está abierto
+      return;
+    }
+    if (!open) {
+      onClose();
+    }
+  };
+
   const routeClients = useMemo(
     () => allClients.filter((c) => c.routeId === routeId && c.active !== false),
     [allClients, routeId],
@@ -85,7 +101,7 @@ export function StartRouteDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -170,11 +186,7 @@ export function StartRouteDialog({
         open={askPwd}
         title="Modificar carga inicial"
         description="Ingresa la contraseña de administrador para editar las cantidades."
-        onConfirm={() => {
-          setUnlocked(true);
-          toast.success("Edición desbloqueada");
-          setAskPwd(false);
-        }}
+        onConfirm={handlePasswordConfirm}
         onClose={() => setAskPwd(false)}
         closeOnConfirm={false}
       />

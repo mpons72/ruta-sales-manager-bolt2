@@ -48,6 +48,7 @@ export function AdminPasswordPrompt({
       if (closeOnConfirm) {
         onClose();
       }
+      setLoading(false);
     } catch (error) {
       console.error("Error verifying password:", error);
       toast.error("Error al verificar contraseña");

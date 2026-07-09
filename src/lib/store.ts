@@ -626,6 +626,17 @@ export function computeRemaining(active: ActiveRoute, products: Product[]): Reco
   return remaining;
 }
 
+export function getLastSaleForClient(
+  clientId: string,
+  history: HistoryEntry[],
+): ClientSale | null {
+  for (const entry of history) {
+    const sale = entry.sales?.[clientId];
+    if (sale) return sale;
+  }
+  return null;
+}
+
 // Piezas surtidas de un sabor específico al cliente. Las devoluciones NO se restan aquí
 // porque pueden ser de un sabor distinto; se contabilizan al total con `clientNetUnits`.
 export function clientUnitsSold(sale: ClientSale, productId: string): number {

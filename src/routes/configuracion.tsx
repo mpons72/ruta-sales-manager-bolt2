@@ -293,8 +293,14 @@ export function ClientsTab() {
     setCapturingId(id);
     try {
       const r = await captureLocation();
-      actions.updateClient(id, { address: r.address, lat: r.lat, lng: r.lng });
-      toast.success("Ubicación actualizada");
+      actions.updateClient(id, {
+        address: r.address,
+        lat: r.lat,
+        lng: r.lng,
+        placeId: null,
+        verifiedAddress: undefined,
+      });
+      toast.success("Ubicación GPS actualizada — para mayor exactitud usa 'Verificar' con Google");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -523,20 +529,17 @@ export function ClientsTab() {
   );
 }
 
-function ClientEditRow({
+function ClientEditForm({
   client,
   products,
-  capturing,
-  onCapture,
+  onClose,
 }: {
   client: Client;
   products: Product[];
-  capturing: boolean;
-  onCapture: () => void;
+  onClose: () => void;
 }) {
   const routes = useStore((s) => s.routes);
   const allClients = useStore((s) => s.clients);
-  const [open, setOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [name, setName] = useState(client.name);
   const [address, setAddress] = useState(client.address ?? "");
@@ -570,7 +573,6 @@ function ClientEditRow({
     (address ?? "") !== (client.address ?? "") ||
     routeId !== client.routeId ||
     (Number.isFinite(orderNum) && orderNum !== client.visitOrder);
-  const isActive = client.active !== false;
 
   const save = () => {
     if (!name.trim()) {
@@ -605,6 +607,7 @@ function ClientEditRow({
     } else {
       toast.success("Cambios guardados");
     }
+    onClose();
   };
 
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
@@ -613,136 +616,7 @@ function ClientEditRow({
   };
 
   return (
-    <div
-      className={`rounded-xl border bg-card p-3 transition ${isActive ? "" : "opacity-60"}`}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-start gap-3 text-left"
-      >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-bold text-primary">
-          {client.visitOrder}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <h4 className="truncate font-semibold">{client.name}</h4>
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {client.credit && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600">
-                <CreditCard className="h-3 w-3" /> Crédito
-              </span>
-            )}
-            {client.specialPricing?.enabled && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                <Tag className="h-3 w-3" /> Precio especial
-              </span>
-            )}
-          </div>
-          {client.address && (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{client.address}</p>
-          )}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-primary">
-            {client.lat != null && client.lng != null ? (
-              <a
-                href={mapsUrl(client.lat, client.lng, client.address, client.placeId)}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (getAskEachTime()) {
-                    e.preventDefault();
-                    openMapChooser(client.lat, client.lng, client.address, client.placeId);
-                  }
-                }}
-                className="inline-flex items-center gap-1 hover:underline"
-              >
-                <ExternalLink className="h-3 w-3" /> Ver en Maps
-                {client.placeId && (
-                  <ShieldCheck className="h-3 w-3 text-success" aria-label="Verificada" />
-                )}
-              </a>
-            ) : null}
-            <button
-              type="button"
-              onClick={stop(onCapture)}
-              disabled={capturing}
-              className="inline-flex items-center gap-1 hover:underline disabled:opacity-50"
-            >
-              {capturing ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <MapPin className="h-3 w-3" />
-              )}
-              {client.lat != null ? "Actualizar GPS" : "Capturar GPS"}
-            </button>
-            <Link
-              to="/clientes/$clientId"
-              params={{ clientId: client.id }}
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 hover:underline"
-            >
-              <BarChart3 className="h-3 w-3" /> Estadísticas
-            </Link>
-          </div>
-        </div>
-      </button>
-
-      <div className="mt-2 flex items-center justify-end gap-1 border-t border-border/40 pt-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setOpen((v) => !v)}
-          title="Editar"
-        >
-          <Pencil className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => actions.moveClient(client.id, "up")}
-          title="Subir en la secuencia"
-        >
-          <ArrowUp className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => actions.moveClient(client.id, "down")}
-          title="Bajar en la secuencia"
-        >
-          <ArrowDown className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => actions.updateClient(client.id, { active: !isActive })}
-          title={isActive ? "Desactivar cliente" : "Activar cliente"}
-        >
-          <Power className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => {
-            if (confirm(`¿Eliminar al cliente "${client.name}"? Esta acción no se puede deshacer.`)) {
-              actions.removeClient(client.id);
-            }
-          }}
-          title="Eliminar cliente"
-        >
-          <Trash2 className="h-4 w-4 text-destructive" />
-        </Button>
-      </div>
-
-      {open && (
-        <div className="mt-3 space-y-2 rounded-lg border border-border/40 bg-background/50 p-3">
+    <div className="mt-3 space-y-2 rounded-lg border border-border/40 bg-background/50 p-3">
           <div>
             <Label className="text-[10px] uppercase text-muted-foreground">Nombre</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -897,6 +771,163 @@ function ClientEditRow({
             </Button>
           </div>
         </div>
+  );
+}
+
+function ClientEditRow({
+  client,
+  products,
+  capturing,
+  onCapture,
+}: {
+  client: Client;
+  products: Product[];
+  capturing: boolean;
+  onCapture: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isActive = client.active !== false;
+
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+
+  return (
+    <div
+      className={`rounded-xl border bg-card p-3 transition ${isActive ? "" : "opacity-60"}`}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-start gap-3 text-left"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-bold text-primary">
+          {client.visitOrder}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <h4 className="truncate font-semibold">{client.name}</h4>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {client.credit && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600">
+                <CreditCard className="h-3 w-3" /> Crédito
+              </span>
+            )}
+            {client.specialPricing?.enabled && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                <Tag className="h-3 w-3" /> Precio especial
+              </span>
+            )}
+          </div>
+          {client.address && (
+            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{client.address}</p>
+          )}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-primary">
+            {client.lat != null && client.lng != null ? (
+              <a
+                href={mapsUrl(client.lat, client.lng, client.address, client.placeId)}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (getAskEachTime()) {
+                    e.preventDefault();
+                    openMapChooser(client.lat, client.lng, client.address, client.placeId);
+                  }
+                }}
+                className="inline-flex items-center gap-1 hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" /> Ver en Maps
+                {client.placeId && (
+                  <ShieldCheck className="h-3 w-3 text-success" aria-label="Verificada" />
+                )}
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={stop(onCapture)}
+              disabled={capturing}
+              className="inline-flex items-center gap-1 hover:underline disabled:opacity-50"
+            >
+              {capturing ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <MapPin className="h-3 w-3" />
+              )}
+              {client.lat != null ? "Actualizar GPS" : "Capturar GPS"}
+            </button>
+            <Link
+              to="/clientes/$clientId"
+              params={{ clientId: client.id }}
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 hover:underline"
+            >
+              <BarChart3 className="h-3 w-3" /> Estadísticas
+            </Link>
+          </div>
+        </div>
+      </button>
+
+      <div className="mt-2 flex items-center justify-end gap-1 border-t border-border/40 pt-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => setOpen((v) => !v)}
+          title="Editar"
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => actions.moveClient(client.id, "up")}
+          title="Subir en la secuencia"
+        >
+          <ArrowUp className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => actions.moveClient(client.id, "down")}
+          title="Bajar en la secuencia"
+        >
+          <ArrowDown className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => actions.updateClient(client.id, { active: !isActive })}
+          title={isActive ? "Desactivar cliente" : "Activar cliente"}
+        >
+          <Power className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => {
+            if (confirm(`¿Eliminar al cliente "${client.name}"? Esta acción no se puede deshacer.`)) {
+              actions.removeClient(client.id);
+            }
+          }}
+          title="Eliminar cliente"
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
+      </div>
+
+      {open && (
+        <ClientEditForm
+          client={client}
+          products={products}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );

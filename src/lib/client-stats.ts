@@ -141,6 +141,64 @@ export function getLastPurchase(
 
 export type ProductStat = { id: string; name: string; units: number; visits: number; avg: number };
 
+export function getAllPurchases(
+  client: Client,
+  history: HistoryEntry[],
+  active: ActiveRoute | null,
+  products: Product[],
+): LastPurchase[] {
+  type Hit = { date: string; sale: ClientSale };
+  const hits: Hit[] = [];
+  for (const h of history) {
+    for (const s of entrySalesForClient(h, client)) {
+      if (s.completed || saleHasMovement(s)) hits.push({ date: h.endedAt ?? h.date, sale: s });
+    }
+  }
+  if (active) {
+    for (const s of entrySalesForClient(active, client)) {
+      if (s.completed) hits.push({ date: active.date, sale: s });
+    }
+  }
+  if (hits.length === 0) return [];
+  hits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  
+  return hits.map((hit) => {
+    const items = products
+      .map((p) => {
+        const surtido = Number(hit.sale.surtido?.[p.id] ?? 0);
+        const devolucion = Number(hit.sale.devolucion?.[p.id] ?? 0);
+        const existenciaAnterior = Number(hit.sale.existenciaAnterior?.[p.id] ?? 0);
+        const existenciaActual = Number(hit.sale.existenciaActual?.[p.id] ?? 0);
+        const qty = surtido - devolucion;
+        return {
+          name: p.name,
+          qty,
+          price: priceFor(hit.sale, p),
+          surtido,
+          devolucion,
+          existenciaAnterior,
+          existenciaActual,
+        };
+      })
+      .filter(
+        (x) =>
+          x.qty !== 0 ||
+          x.surtido !== 0 ||
+          x.devolucion !== 0 ||
+          x.existenciaAnterior !== 0 ||
+          x.existenciaActual !== 0,
+      );
+    return {
+      date: hit.date,
+      total: clientSaleAmount(hit.sale, products),
+      units: clientNetUnits(hit.sale),
+      paymentType: hit.sale.paymentType,
+      notes: hit.sale.notes,
+      items,
+    };
+  });
+}
+
 export function getClientTopProducts(
   client: Client,
   history: HistoryEntry[],

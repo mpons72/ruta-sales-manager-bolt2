@@ -229,25 +229,29 @@ export function NoteSettingsDialog({ open, onOpenChange }: NoteSettingsDialogPro
           <div className="space-y-4">
             <Label>Previsualización (tamaño real: {config.paperWidth})</Label>
             <div className="flex items-center justify-center bg-gray-100 p-4 border rounded-lg">
+              <style>{`
+                #note-preview-override .receipt,
+                #note-preview-override .receipt * {
+                  font-size: ${config.fontSize}px !important;
+                  font-family: ${config.fontFamily} !important;
+                }
+                #note-preview-override {
+                  padding-top: ${config.marginTop}px !important;
+                  padding-bottom: ${config.marginBottom}px !important;
+                  padding-left: ${config.marginLeft}px !important;
+                  padding-right: ${config.marginRight}px !important;
+                }
+              `}</style>
               <div
-                className="bg-white overflow-auto"
+                id="note-preview-override"
+                className="bg-white overflow-auto box-border"
                 style={{
                   width: config.paperWidth === "58mm" ? "58mm" : "80mm",
                   maxHeight: "500px",
                   boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-                  marginTop: `${config.marginTop}px`,
-                  marginBottom: `${config.marginBottom}px`,
-                  marginLeft: `${config.marginLeft}px`,
-                  marginRight: `${config.marginRight}px`,
                 }}
               >
-                <div 
-                  dangerouslySetInnerHTML={{ __html: previewHtml }} 
-                  style={{
-                    fontSize: `${config.fontSize}px`,
-                    fontFamily: config.fontFamily,
-                  }}
-                />
+                <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
               </div>
             </div>
           </div>

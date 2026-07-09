@@ -45,32 +45,44 @@ function computeTotals(data: RemisionData) {
   return { lines, totalPzas, totalDev, subtotal, descDev, total };
 }
 
-const style = (cfg: any) => `
+function buildStyle(cfg: ReturnType<typeof getBusinessConfig>): string {
+  return `
   <style>
-    .receipt { 
-      font-family: ${cfg.fontFamily}; 
-      font-size: ${cfg.fontSize}px; 
-      color: #000; 
-      margin: ${cfg.marginTop}px ${cfg.marginRight}px ${cfg.marginBottom}px ${cfg.marginLeft}px; 
-      padding: 0;
-      white-space: pre;
-      line-height: 1.0;
-      width: ${cfg.paperWidth};
-      overflow: hidden;
-      word-wrap: break-word;
-      word-break: break-all;
+    .receipt {
+      font-family: ${cfg.fontFamily};
+      font-size: ${cfg.fontSize}px;
+      color: #000;
+      box-sizing: border-box;
+      width: 100%;
+      padding-top: ${cfg.marginTop}px;
+      padding-bottom: ${cfg.marginBottom}px;
+      padding-left: ${cfg.marginLeft}px;
+      padding-right: ${cfg.marginRight}px;
+      line-height: 1.3;
     }
     .center { text-align: center; }
     .bold { font-weight: bold; }
-    .row { white-space: nowrap; }
-    .logo-img { max-width: 120px; max-height: 40px; display: block; margin: 0 auto; }
+    .divider { border-top: 1px dashed #000; margin: 4px 0; }
+    .products-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .products-table th, .products-table td {
+      padding: 2px 2px;
+      vertical-align: top;
+      word-break: break-word;
+      font-family: inherit;
+      font-size: inherit;
+    }
+    .products-table th { border-bottom: 1px solid #000; font-weight: bold; text-align: left; }
+    .col-name { width: 40%; text-align: left; }
+    .col-qty { width: 18%; text-align: right; }
+    .col-price { width: 21%; text-align: right; }
+    .col-total { width: 21%; text-align: right; }
+    .totals-row { display: flex; justify-content: space-between; }
+    .logo-img { max-width: 150px; max-height: 50px; display: block; margin: 0 auto; }
     img { display: block; }
   </style>
 `;
+}
 
-/**
- * Construye el cuerpo de la nota con formato específico usando divisors "─"
- */
 export function buildReceiptInnerHtml(data: RemisionData): string {
   if (!data || !data.products || !data.sale) {
     return `<div class="receipt center bold">Error: Datos del recibo incompletos</div>`;
@@ -89,57 +101,58 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
     return `${day}/${month}/${year}`;
   };
 
-  const divider = cfg.paperWidth === "58mm" 
-    ? '────────────────────────────────────────'
-    : '────────────────────────────────────────────────────────';
-
-  let productsText = '';
-  for (const l of lines) {
-    const nameLen = cfg.paperWidth === "58mm" ? 22 : 32;
-    const name = l.name.length > nameLen ? l.name.slice(0, nameLen) : l.name;
-    const qtyStr = l.qty.toString().padStart(4);
-    const priceStr = `$${l.price.toFixed(2)}`.padStart(8);
-    const totalStr = `$${l.total.toFixed(2)}`.padStart(9);
-    productsText += escapeHtml(name.padEnd(nameLen)) + escapeHtml(qtyStr) + escapeHtml(priceStr) + escapeHtml(totalStr) + '\n';
-  }
-
-  let headerLines = '';
-  if (cfg.title) {
-    headerLines += `<div class="center bold">${escapeHtml(cfg.title)}</div>\n`;
-  }
-  if (cfg.subtitle) {
-    headerLines += `<div class="center">${escapeHtml(cfg.subtitle)}</div>\n`;
-  }
-
   let logoHtml = '';
   if (cfg.logoDataUrl) {
-    logoHtml = `<img src="${cfg.logoDataUrl}" class="logo-img" alt="Logo" />\n`;
+    logoHtml = `<img src="${cfg.logoDataUrl}" class="logo-img" alt="Logo" />`;
+  }
+  let headerLines = '';
+  if (cfg.title) {
+    headerLines += `<div class="center bold">${escapeHtml(cfg.title)}</div>`;
+  }
+  if (cfg.subtitle) {
+    headerLines += `<div class="center">${escapeHtml(cfg.subtitle)}</div>`;
   }
 
-  const bodyLines = [
-    divider,
-    logoHtml + headerLines + `<div class="center bold">NOTA DE REMISIÓN</div>`,
-    divider,
-    `Folio: ${escapeHtml(folio)}`,
-    `Fecha: ${formatDate(date)}`,
-    `Cliente: ${escapeHtml(data.client?.name || "N/A")}`,
-    data.client?.address ? `Dirección: ${escapeHtml(data.client.address)}` : '',
-    `Pago: ${paymentLabel}`,
-    divider,
-    cfg.paperWidth === "58mm"
-      ? `Producto${' '.repeat(14)}Cant${' '.repeat(3)}P.U.${' '.repeat(5)}Imp.`
-      : `Producto${' '.repeat(24)}Cant${' '.repeat(3)}P.U.${' '.repeat(5)}Imp.`,
-    divider,
-    productsText.trimEnd(),
-    divider,
-    `Piezas surtidas: ${totalPzas}`,
-    `Subtotal:${' '.repeat(cfg.paperWidth === "58mm" ? 26 : 38)}$${subtotal.toFixed(2)}`,
-    divider,
-    `<div class="bold">TOTAL${' '.repeat(cfg.paperWidth === "58mm" ? 26 : 38)}$${total.toFixed(2)}</div>`,
-    divider,
-    `<div class="center">${escapeHtml(cfg.footerText || '¡Gracias por su compra!')}</div>`,
-    divider,
-  ];
+  const productRows = lines.map(l => `
+    <tr>
+      <td class="col-name">${escapeHtml(l.name)}</td>
+      <td class="col-qty">${l.qty}</td>
+      <td class="col-price">$${l.price.toFixed(2)}</td>
+      <td class="col-total">$${l.total.toFixed(2)}</td>
+    </tr>
+  `).join('');
 
-  return `${style(cfg)}<div class="receipt">${bodyLines.filter(l => l !== '').join('\n')}</div>`;
+  return `${buildStyle(cfg)}
+<div class="receipt">
+  ${logoHtml}
+  ${headerLines}
+  <div class="center bold">NOTA DE REMISIÓN</div>
+  <div class="divider"></div>
+  <div>Folio: ${escapeHtml(folio)}</div>
+  <div>Fecha: ${formatDate(date)}</div>
+  <div>Cliente: ${escapeHtml(data.client?.name || "N/A")}</div>
+  ${data.client?.address ? `<div>Dirección: ${escapeHtml(data.client.address)}</div>` : ''}
+  <div>Pago: ${paymentLabel}</div>
+  <div class="divider"></div>
+  <table class="products-table">
+    <thead>
+      <tr>
+        <th class="col-name">Producto</th>
+        <th class="col-qty">Cant</th>
+        <th class="col-price">P.U.</th>
+        <th class="col-total">Imp.</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${productRows}
+    </tbody>
+  </table>
+  <div class="divider"></div>
+  <div>Piezas surtidas: ${totalPzas}</div>
+  <div class="totals-row"><span>Subtotal:</span><span>$${subtotal.toFixed(2)}</span></div>
+  <div class="divider"></div>
+  <div class="totals-row bold"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>
+  <div class="divider"></div>
+  <div class="center">${escapeHtml(cfg.footerText || '¡Gracias por su compra!')}</div>
+</div>`;
 }

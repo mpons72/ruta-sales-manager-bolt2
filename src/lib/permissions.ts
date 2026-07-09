@@ -115,17 +115,42 @@ export async function scheduleBackupNotification(title: string, body: string): P
 export async function checkAllPermissions(): Promise<{
   notifications: boolean;
   storage: boolean;
+  battery: boolean;
+  alarm: boolean;
 }> {
   try {
-    const [notifications, storage] = await Promise.all([
+    const [notifications, storage, battery, alarm] = await Promise.all([
       checkNotificationPermission(),
       requestStoragePermission(),
+      checkBatteryExemption(),
+      checkExactAlarm(),
     ]);
-
-    return { notifications, storage };
+    return { notifications, storage, battery, alarm };
   } catch (error) {
     console.error('Error checking permissions:', error);
-    // En caso de error, asumir permisos concedidos para no bloquear la app
-    return { notifications: true, storage: true };
+    return { notifications: true, storage: true, battery: true, alarm: true };
   }
 }
+
+export async function checkBatteryExemption(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return true;
+  try {
+    const BackupScheduler = (await import('@/lib/BackupSchedulerPlugin')).default;
+    const result = await BackupScheduler.checkBatteryOptimization();
+    return result.exempt === true;
+  } catch {
+    return true;
+  }
+}
+
+export async function checkExactAlarm(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return true;
+  try {
+    const BackupScheduler = (await import('@/lib/BackupSchedulerPlugin')).default;
+    const result = await BackupScheduler.checkExactAlarmPermission();
+    return result.canSchedule === true;
+  } catch {
+    return true;
+  }
+}
+

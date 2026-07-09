@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { actions, useStore, productsForClients } from "@/lib/store";
+import { actions, useStore, productsForClients, getLastSaleForClient, type ClientSale } from "@/lib/store";
 import { AdminPasswordPrompt } from "@/components/AdminPasswordPrompt";
 import {
   Sparkles,
@@ -49,6 +49,7 @@ export function StartTemporaryRouteDialog({
   const allClients = useStore((s) => s.clients);
   const routes = useStore((s) => s.routes);
   const lastInitial = useStore((s) => s.active?.initialInventory);
+  const history = useStore((s) => s.history);
 
   const [step, setStep] = useState<"clients" | "load">("clients");
   // Orden de selección preservado en array
@@ -60,6 +61,22 @@ export function StartTemporaryRouteDialog({
   const [unlocked, setUnlocked] = useState(false);
   const [askPwd, setAskPwd] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
+
+  const handlePasswordConfirm = () => {
+    setUnlocked(true);
+    toast.success("Edición desbloqueada");
+    setAskPwd(false);
+  };
+
+  const handleDialogOpenChange = (open: boolean) => {
+    if (!open && askPwd) {
+      // Prevenir que el diálogo principal se cierre mientras el diálogo de contraseña está abierto
+      return;
+    }
+    if (!open) {
+      onClose();
+    }
+  };
 
   const selectedClientObjs = useMemo(
     () => selected.map((id) => allClients.find((c) => c.id === id)).filter(Boolean) as typeof allClients,
@@ -222,7 +239,25 @@ export function StartTemporaryRouteDialog({
     }
     const inv: Record<string, number> = {};
     for (const p of products) inv[p.id] = Math.max(0, Number(values[p.id] || 0));
+
     actions.startTemporaryRoute(selected, inv, label);
+
+    for (const clientId of selected) {
+      const lastSale = getLastSaleForClient(clientId, history);
+      if (lastSale && !lastSale.completed) {
+        actions.saveClientSale(clientId, {
+          existenciaAnterior: lastSale.existenciaAnterior ?? {},
+          existenciaActual: lastSale.existenciaActual ?? {},
+          surtido: lastSale.surtido ?? {},
+          devolucion: lastSale.devolucion ?? {},
+          completed: false,
+          paymentType: lastSale.paymentType,
+          priceSnapshot: lastSale.priceSnapshot,
+          notes: lastSale.notes,
+        });
+      }
+    }
+
     toast.success(`Ruta temporal iniciada con ${selected.length} clientes`);
     onStarted();
     onClose();
@@ -230,7 +265,7 @@ export function StartTemporaryRouteDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -505,10 +540,7 @@ export function StartTemporaryRouteDialog({
         open={askPwd}
         title="Modificar carga inicial"
         description="Ingresa la contraseña de administrador para editar las cantidades."
-        onConfirm={() => {
-          setUnlocked(true);
-          toast.success("Edición desbloqueada");
-        }}
+        onConfirm={handlePasswordConfirm}
         onClose={() => setAskPwd(false)}
       />
     </>

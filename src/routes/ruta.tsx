@@ -14,6 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   actions,
   clientSaleAmount,
   computeRemaining,
@@ -28,7 +35,7 @@ import { useNavProvider, useAskEachTime, openSygic, GOOGLE_MAX_PER_SEGMENT } fro
 import { CargaInicialDialog } from "@/components/CargaInicialDialog";
 import { VerifyAddressDialog } from "@/components/VerifyAddressDialog";
 import { buildGpx, downloadGpx } from "@/lib/gpx";
-import { getLastPurchase, getClientTopProducts } from "@/lib/client-stats";
+import { getLastPurchase, getClientTopProducts, getAllPurchases } from "@/lib/client-stats";
 import { toast } from "sonner";
 import { CheckCircle2, MapPin, Truck, ArrowRight, Flag, Sparkles, Navigation, Lock, ChevronDown, ChevronUp, CreditCard, Banknote, Crosshair, Loader2, Printer, Download, BarChart3, History, ShieldCheck } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -64,12 +71,24 @@ function RutaPage() {
   const [verifyClientId, setVerifyClientId] = useState<string | null>(null);
   const [receiptData, setReceiptData] = useState<RemisionData | null>(null);
 
-  const capturarUbicacion = async (clientId: string) => {
+  const capturarUbicacion = async (clientId: string, currentLat?: number | null) => {
+    if (currentLat != null) {
+      const confirmar = window.confirm(
+        "Este cliente ya tiene una ubicación guardada. ¿Deseas reemplazarla con tu ubicación GPS actual?"
+      );
+      if (!confirmar) return;
+    }
     setCapturandoId(clientId);
     try {
       const { lat, lng, address } = await captureLocation();
-      actions.updateClient(clientId, { lat, lng, address });
-      toast.success("Ubicación guardada en el cliente");
+      actions.updateClient(clientId, {
+        lat,
+        lng,
+        address,
+        placeId: undefined,
+        verifiedAddress: undefined,
+      });
+      toast.success("Ubicación GPS actualizada con máxima precisión");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -107,7 +126,7 @@ function RutaPage() {
     [active, allProducts],
   );
 
-  const exportarGpx = () => {
+  const exportarGpx = async () => {
     if (!active) return;
     const conGps = clients.filter((c) => c.lat != null && c.lng != null);
     if (conGps.length === 0) {
@@ -117,8 +136,12 @@ function RutaPage() {
     const routeName = active.label ?? routes.find((r) => r.id === active.routeId)?.name ?? "Ruta";
     const fecha = new Date(active.date).toISOString().slice(0, 10);
     const gpx = buildGpx(conGps, `${routeName} · ${fecha}`);
-    downloadGpx(`ruta-${fecha}.gpx`, gpx);
-    toast.success(`GPX generado con ${conGps.length} parada(s)`);
+    try {
+      await downloadGpx(`ruta-${fecha}.gpx`, gpx);
+      toast.success(`GPX generado con ${conGps.length} parada(s)`);
+    } catch (e) {
+      toast.error("No se pudo exportar: " + (e as Error).message);
+    }
   };
 
   if (!active) {
@@ -564,7 +587,7 @@ function RutaPage() {
                     size="sm"
                     variant="outline"
                     disabled={capturandoId === c.id}
-                    onClick={(e) => { e.stopPropagation(); capturarUbicacion(c.id); }}
+                    onClick={(e) => { e.stopPropagation(); capturarUbicacion(c.id, c.lat); }}
                     className="border-primary/40 text-primary hover:bg-primary/10"
                   >
                     {capturandoId === c.id ? (
@@ -578,14 +601,19 @@ function RutaPage() {
                 <Button
                   size="icon"
                   variant="outline"
-                  title="Verificar dirección con Google"
+                  title="Actualizar GPS con máxima precisión"
+                  disabled={capturandoId === c.id}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setVerifyClientId(c.id);
+                    capturarUbicacion(c.id, c.lat);
                   }}
                   className="border-primary/40 text-primary hover:bg-primary/10 h-8 w-8"
                 >
-                  <ShieldCheck className="h-4 w-4" />
+                  {capturandoId === c.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="h-4 w-4" />
+                  )}
                 </Button>
                 {done && (
                   <Button
@@ -779,11 +807,11 @@ function ClientDialog({
 
   // 'Queda' reactiva: Carga inicial − suma de surtidas globales. Las devoluciones son merma
   // y NO regresan al inventario; tampoco son necesariamente del mismo sabor.
+  // El surtido del cliente actual se incluye siempre (incluso en borradores) para reflejar el inventario real.
   const computeQueda = (productId: string) => {
     const initial = active.initialInventory[productId] ?? 0;
     let surtTotal = 0;
     for (const [cid, sale] of Object.entries(active.sales)) {
-      if (cid === clientId) continue;
       surtTotal += sale.surtido[productId] ?? 0;
     }
     surtTotal += Number(surtido[productId] || 0);
@@ -1007,6 +1035,7 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
   const history = useStore((s) => s.history);
   const active = useStore((s) => s.active);
   const [open, setOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>("latest");
   const products = useMemo(
     () => productsForClient(allProducts, groups, client),
     [allProducts, groups, client],
@@ -1015,10 +1044,19 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
     () => (client ? getLastPurchase(client, history, active, products) : null),
     [client, history, active, products],
   );
+  const allPurchases = useMemo(
+    () => (client ? getAllPurchases(client, history, active, products) : []),
+    [client, history, active, products],
+  );
   const stats = useMemo(
     () => (client ? getClientTopProducts(client, history, active, products, 5) : null),
     [client, history, active, products],
   );
+
+  // Seleccionar la compra a mostrar basada en selectedDate
+  const selectedPurchase = selectedDate === "latest" 
+    ? last 
+    : allPurchases.find(p => p.date === selectedDate) || last;
 
   if (!client) return null;
 
@@ -1050,7 +1088,7 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="w-[95vw] max-w-lg p-4 sm:p-6">
+        <DialogContent className="w-[95vw] max-w-4xl p-4 sm:p-6 max-h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -1060,16 +1098,44 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
             </DialogTitle>
           </DialogHeader>
 
+          {/* Menú desplegable de fechas */}
+          {allPurchases.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium">Seleccionar venta:</label>
+              <Select value={selectedDate} onValueChange={setSelectedDate}>
+                <SelectTrigger className="w-[250px]">
+                  <SelectValue placeholder="Última compra" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="latest">Última compra</SelectItem>
+                  {allPurchases.map((p) => {
+                    const dateStr = new Date(p.date).toLocaleDateString("es-MX", {
+                      weekday: "short",
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                    });
+                    return (
+                      <SelectItem key={p.date} value={p.date}>
+                        {dateStr} · ${p.total.toFixed(2)} · {p.units} pzas
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="space-y-3">
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
               <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                <History className="h-3.5 w-3.5" /> Última compra
+                <History className="h-3.5 w-3.5" /> {selectedDate === "latest" ? "Última compra" : "Compra seleccionada"}
               </div>
-              {last ? (
+              {selectedPurchase ? (
                 <div className="mt-1">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <div className="text-sm font-semibold">
-                      {new Date(last.date).toLocaleDateString("es-MX", {
+                      {new Date(selectedPurchase.date).toLocaleDateString("es-MX", {
                         weekday: "short",
                         day: "2-digit",
                         month: "short",
@@ -1077,14 +1143,14 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
                       })}
                     </div>
                     <div className="text-lg font-extrabold text-primary tabular-nums">
-                      ${last.total.toFixed(2)}
+                      ${selectedPurchase.total.toFixed(2)}
                     </div>
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    {last.units} pzas netas
-                    {last.paymentType ? ` · ${last.paymentType === "credit" ? "Crédito" : "Contado"}` : ""}
+                    {selectedPurchase.units} pzas netas
+                    {selectedPurchase.paymentType ? ` · ${selectedPurchase.paymentType === "credit" ? "Crédito" : "Contado"}` : ""}
                   </div>
-                  {last.items.length > 0 && (
+                  {selectedPurchase.items.length > 0 && (
                     <div className="mt-2 overflow-x-auto">
                       <table className="w-full text-[11px]">
                         <thead>
@@ -1099,7 +1165,7 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {last.items.map((it) => (
+                          {selectedPurchase.items.map((it) => (
                             <tr key={it.name} className="border-t border-border/40">
                               <td className="py-1 pr-2 font-medium">{it.name}</td>
                               <td className="py-1 px-1 text-right tabular-nums text-muted-foreground">{it.existenciaAnterior}</td>
@@ -1114,12 +1180,12 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
                       </table>
                     </div>
                   )}
-                  {last.notes && (
+                  {selectedPurchase.notes && (
                     <div className="mt-2 rounded-md border border-border/60 bg-card/60 p-2">
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Notas / incidentes
                       </div>
-                      <div className="mt-0.5 whitespace-pre-wrap text-xs">{last.notes}</div>
+                      <div className="mt-0.5 whitespace-pre-wrap text-xs">{selectedPurchase.notes}</div>
                     </div>
                   )}
                 </div>

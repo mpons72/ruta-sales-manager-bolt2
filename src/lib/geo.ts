@@ -20,11 +20,15 @@ export function getCurrentPosition(): Promise<{ lat: number; lng: number }> {
       (err) => {
         let msg = "No se pudo obtener la ubicación";
         if (err.code === 1) msg = "Permiso de ubicación denegado. Ve a Ajustes > Apps > SalsaRuta > Permisos > Ubicación";
-        if (err.code === 2) msg = "Ubicación no disponible. Activa el GPS del dispositivo";
-        if (err.code === 3) msg = "Tiempo de espera agotado. Intenta de nuevo";
+        if (err.code === 2) msg = "GPS no disponible. Activa la ubicación del dispositivo";
+        if (err.code === 3) msg = "Tiempo agotado. Sal al exterior o activa modo alta precisión";
         reject(new Error(msg));
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+      {
+        enableHighAccuracy: true,
+        timeout: 30000,
+        maximumAge: 0,
+      }
     );
   });
 }
@@ -90,49 +94,44 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string> 
 
 export async function captureLocation(): Promise<GeoResult> {
   const { lat, lng } = await getCurrentPosition();
-  const address = await reverseGeocode(lat, lng);
+  const address = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
   return { lat, lng, address };
 }
 
 // URL de Google Maps que abre EXACTAMENTE el lugar correcto.
-// Prioridad: placeId (lugar único en Google) > coordenadas verificadas + dirección.
-// Si solo hay dirección de texto, se usa búsqueda por query. NUNCA usamos sólo
-// coordenadas porque pueden ser imprecisas (capturadas en otro punto).
+// Prioridad: coordenadas exactas > dirección de texto.
+// placeId se ignora porque ahora contiene IDs de OpenStreetMap, no Google Place IDs.
 export function mapsUrl(
   lat?: number | null,
   lng?: number | null,
   address?: string | null,
   placeId?: string | null,
 ): string {
-  const addr = address?.trim();
-  if (placeId) {
-    const q = addr ? encodeURIComponent(addr) : "place";
-    return `https://www.google.com/maps/search/?api=1&query=${q}&query_place_id=${encodeURIComponent(placeId)}`;
-  }
-  if (addr) {
-    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving&dir_action=navigate`;
-  }
   if (typeof lat === "number" && typeof lng === "number") {
     return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving&dir_action=navigate`;
+  }
+  const addr = address?.trim();
+  if (addr) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving&dir_action=navigate`;
   }
   return "https://www.google.com/maps";
 }
 
 // URI estándar Android/geo que dispara el selector de apps del sistema
-// (Google Maps, Waze, Sygic, OsmAnd, etc.). Si hay dirección de texto la
-// usamos como query (más exacto que coordenadas brutas).
+// (Google Maps, Waze, Sygic, OsmAnd, etc.). Prioridad: coordenadas exactas > dirección de texto.
 export function geoChooserUrl(
   lat?: number | null,
   lng?: number | null,
   address?: string | null,
 ): string {
-  const addr = address?.trim();
   const hasCoords = typeof lat === "number" && typeof lng === "number";
-  if (addr) {
-    const base = hasCoords ? `geo:${lat},${lng}` : "geo:0,0";
-    return `${base}?q=${encodeURIComponent(addr)}`;
+  if (hasCoords) {
+    return `geo:${lat},${lng}?q=${lat},${lng}`;
   }
-  if (hasCoords) return `geo:${lat},${lng}?q=${lat},${lng}`;
+  const addr = address?.trim();
+  if (addr) {
+    return `geo:0,0?q=${encodeURIComponent(addr)}`;
+  }
   return "geo:0,0";
 }
 
