@@ -2,7 +2,8 @@ package com.salsaruta.app;
 
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -14,25 +15,30 @@ import com.salsaruta.app.print.PrintPlugin;
 
 public class MainActivity extends BridgeActivity {
 
-    private static final String PREFS_NAME = "app_permissions";
-    private static final String KEY_PERMISSIONS_REQUESTED = "permissions_requested_v2";
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(PrintPlugin.class);
         registerPlugin(BackupSchedulerPlugin.class);
         super.onCreate(savedInstanceState);
-
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        boolean alreadyRequested = prefs.getBoolean(KEY_PERMISSIONS_REQUESTED, false);
-        if (!alreadyRequested) {
-            requestAllBackgroundPermissions();
-            prefs.edit().putBoolean(KEY_PERMISSIONS_REQUESTED, true).apply();
-        }
+        android.webkit.WebView webView = getBridge().getWebView();
+        webView.getSettings().setSupportZoom(true);
+        webView.getSettings().setBuiltInZoomControls(true);
+        webView.getSettings().setDisplayZoomControls(false);
+        requestBatteryOptimizationExemption();
     }
 
-    private void requestAllBackgroundPermissions() {
-        requestBatteryOptimizationExemption();
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            Configuration config = new Configuration(
+                newBase.getResources().getConfiguration()
+            );
+            config.fontScale = 1.0f;
+            Context context = newBase.createConfigurationContext(config);
+            super.attachBaseContext(context);
+        } else {
+            super.attachBaseContext(newBase);
+        }
     }
 
     private void requestBatteryOptimizationExemption() {

@@ -114,7 +114,11 @@ function salesFromEntry(entry: ActiveRoute | HistoryEntry, client: Client): Clie
 }
 
 function saleHasMovement(sale: ClientSale) {
-  return totalRecordUnits(sale.surtido) > 0 || totalRecordUnits(sale.devolucion) > 0;
+  return (
+    totalRecordUnits(sale.surtido) > 0 ||
+    totalRecordUnits(sale.devolucion) > 0 ||
+    totalRecordUnits(sale.existenciaAnterior) > 0
+  );
 }
 
 function LastPurchaseCard({

@@ -89,7 +89,7 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
   }
 
   const cfg = getBusinessConfig();
-  const { lines, totalPzas, subtotal, total } = computeTotals(data);
+  const { lines, totalPzas, totalDev, subtotal, descDev, total } = computeTotals(data);
   const date = new Date(data.date);
   const folio = data.folio ?? date.getTime().toString(36).toUpperCase().slice(-6);
   const paymentLabel = data.sale.paymentType === "credit" ? "CRÉDITO" : "CONTADO";
@@ -149,7 +149,12 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
   </table>
   <div class="divider"></div>
   <div>Piezas surtidas: ${totalPzas}</div>
+  ${totalDev > 0 ? `
+  <div class="totals-row"><span>Subtotal bruto:</span><span>$${subtotal.toFixed(2)}</span></div>
+  <div class="totals-row"><span>Devoluciones (${totalDev} pzas):</span><span>-$${descDev.toFixed(2)}</span></div>
+  ` : ` 
   <div class="totals-row"><span>Subtotal:</span><span>$${subtotal.toFixed(2)}</span></div>
+  `}
   <div class="divider"></div>
   <div class="totals-row bold"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>
   <div class="divider"></div>

@@ -18,10 +18,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { actions, useStore, productsForClients, getLastSaleForClient, type ClientSale } from "@/lib/store";
-import { AdminPasswordPrompt } from "@/components/AdminPasswordPrompt";
 import {
   Sparkles,
   Lock,
+  Unlock,
   PlayCircle,
   Search,
   Users,
@@ -32,6 +32,8 @@ import {
   ArrowDown,
   Navigation,
   CreditCard,
+  ShieldAlert,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -59,22 +61,34 @@ export function StartTemporaryRouteDialog({
   const [label, setLabel] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [unlocked, setUnlocked] = useState(false);
-  const [askPwd, setAskPwd] = useState(false);
+  const [showPasswordField, setShowPasswordField] = useState(false);
+  const [password, setPassword] = useState("");
+  const [verifying, setVerifying] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
+  const hasPassword = useStore((s) => !!s.adminPasswordHash);
 
-  const handlePasswordConfirm = () => {
-    setUnlocked(true);
-    toast.success("Edición desbloqueada");
-    setAskPwd(false);
-  };
-
-  const handleDialogOpenChange = (open: boolean) => {
-    if (!open && askPwd) {
-      // Prevenir que el diálogo principal se cierre mientras el diálogo de contraseña está abierto
+  const tryUnlock = async () => {
+    if (!hasPassword) {
+      toast.error("Configura una contraseña de administrador en Ajustes");
       return;
     }
-    if (!open) {
-      onClose();
+    setVerifying(true);
+    try {
+      const ok = await actions.verifyAdminPassword(password);
+      if (!ok) {
+        toast.error("Contraseña incorrecta");
+        setVerifying(false);
+        return;
+      }
+      setUnlocked(true);
+      setShowPasswordField(false);
+      setPassword("");
+      toast.success("Edición desbloqueada");
+    } catch (error) {
+      console.error("Error unlocking:", error);
+      toast.error("Error al verificar contraseña");
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -95,6 +109,8 @@ export function StartTemporaryRouteDialog({
     setRouteFilter("all");
     setLabel("");
     setUnlocked(false);
+    setShowPasswordField(false);
+    setPassword("");
   }, [open]);
 
   useEffect(() => {
@@ -265,7 +281,7 @@ export function StartTemporaryRouteDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
         <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -484,13 +500,45 @@ export function StartTemporaryRouteDialog({
                   Carga inicial por producto (piezas)
                 </span>
                 {unlocked ? (
-                  <span className="font-semibold text-success">Desbloqueado</span>
+                  <span className="font-semibold text-success flex items-center gap-1">
+                    <Unlock className="h-3.5 w-3.5" /> Desbloqueado
+                  </span>
                 ) : (
-                  <Button size="sm" variant="outline" onClick={() => setAskPwd(true)}>
+                  <Button size="sm" variant="outline" onClick={() => setShowPasswordField(true)}>
                     <Lock className="mr-1.5 h-3.5 w-3.5" /> Desbloquear edición
                   </Button>
                 )}
               </div>
+
+              {showPasswordField && !unlocked && (
+                <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-warning">
+                    <ShieldAlert className="h-4 w-4" /> Contraseña de administrador
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      autoFocus
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
+                      placeholder="••••"
+                      className="flex-1"
+                    />
+                    <Button size="sm" onClick={tryUnlock} disabled={verifying}>
+                      <Unlock className="mr-1 h-3.5 w-3.5" />
+                      {verifying ? "..." : "OK"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { setShowPasswordField(false); setPassword(""); }}
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               <div className="max-h-[45vh] space-y-2 overflow-y-auto">
                 {products.map((p) => (
@@ -523,7 +571,17 @@ export function StartTemporaryRouteDialog({
                 <span className="tabular-nums">{totalUnits}</span>
               </div>
 
-              <DialogFooter className="gap-2 sm:gap-2">
+              <DialogFooter className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  variant="outline"
+                  disabled={!unlocked}
+                  onClick={() =>
+                    setValues(Object.fromEntries(products.map((p) => [p.id, "0"])))
+                  }
+                  className="sm:mr-auto"
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" /> Todo en 0
+                </Button>
                 <Button variant="outline" onClick={() => setStep("clients")}>
                   Atrás
                 </Button>
@@ -535,14 +593,6 @@ export function StartTemporaryRouteDialog({
           )}
         </DialogContent>
       </Dialog>
-
-      <AdminPasswordPrompt
-        open={askPwd}
-        title="Modificar carga inicial"
-        description="Ingresa la contraseña de administrador para editar las cantidades."
-        onConfirm={handlePasswordConfirm}
-        onClose={() => setAskPwd(false)}
-      />
     </>
   );
 }

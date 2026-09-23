@@ -94,6 +94,31 @@ export const DEFAULT_ADMIN_PASSWORD = "Admin123";
 let state: AppState = load();
 const listeners = new Set<() => void>();
 
+function compactVisitOrders(state: AppState): AppState {
+  const byRoute = new Map<string, Client[]>();
+  for (const c of state.clients) {
+    const list = byRoute.get(c.routeId) ?? [];
+    list.push(c);
+    byRoute.set(c.routeId, list);
+  }
+  const updated = new Map<string, number>();
+  for (const [routeId, clients] of byRoute) {
+    const sorted = [...clients].sort((a, b) => a.visitOrder - b.visitOrder);
+    sorted.forEach((c, i) => {
+      if (c.visitOrder !== i + 1) {
+        updated.set(c.id, i + 1);
+      }
+    });
+  }
+  if (updated.size === 0) return state;
+  return {
+    ...state,
+    clients: state.clients.map((c) =>
+      updated.has(c.id) ? { ...c, visitOrder: updated.get(c.id)! } : c,
+    ),
+  };
+}
+
 function load(): AppState {
   if (typeof window === "undefined") return defaults;
   try {
@@ -112,7 +137,11 @@ function load(): AppState {
       migrated = mergeImportedStates(legacy, migrated);
     }
     if (sourceKey !== STORAGE_KEY || LEGACY_STORAGE_KEYS.some((key) => localStorage.getItem(key))) localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-    return migrated;
+    const compacted = compactVisitOrders(migrated);
+    if (compacted !== migrated) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compacted));
+    }
+    return compacted;
   } catch {
     return defaults;
   }
@@ -260,13 +289,14 @@ export const actions = {
       }),
     })),
   importClientLocationsFromGpx: (
-    stops: { id?: string; name: string; lat: number; lng: number; address?: string }[],
+    stops: { id?: string; name: string; lat: number; lng: number; address?: string; visitOrder?: number }[],
   ): { matched: number; missed: string[] } => {
     let matched = 0;
     const missed: string[] = [];
     const normalize = (v: string) =>
       v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
-    setState((s) => {
+    setState((s_initial) => {
+      let s = { ...s_initial, clients: [...s_initial.clients] };
       const byId = new Map(s.clients.map((c) => [c.id, c]));
       const byName = new Map<string, Client>();
       for (const c of s.clients) byName.set(normalize(c.name), c);
@@ -276,7 +306,28 @@ export const actions = {
         if (stop.id && byId.has(stop.id)) target = byId.get(stop.id);
         if (!target) target = byName.get(normalize(stop.name));
         if (!target) {
-          missed.push(stop.name);
+          // Client not found — create it from the GPX stop data
+          // Use visitOrder from GPX if available, otherwise append at end
+          const routeId = s.routes[0]?.id ?? "";
+          if (!routeId) {
+            missed.push(stop.name);
+            continue;
+          }
+          const sameRoute = s.clients.filter((c) => c.routeId === routeId);
+          const newOrder = stop.visitOrder ?? (sameRoute.length + 1 + matched);
+          const newClient: Client = {
+            id: uid(),
+            name: stop.name,
+            address: stop.address ?? "",
+            lat: stop.lat,
+            lng: stop.lng,
+            routeId,
+            visitOrder: newOrder,
+            active: true,
+          };
+          // Add to clients array directly in this setState
+          s = { ...s, clients: [...s.clients, newClient] };
+          matched += 1;
           continue;
         }
         matched += 1;
@@ -294,7 +345,10 @@ export const actions = {
     return { matched, missed };
   },
   removeClient: (id: string) =>
-    setState((s) => ({ ...s, clients: s.clients.filter((c) => c.id !== id) })),
+    setState((s) => {
+      const filtered = { ...s, clients: s.clients.filter((c) => c.id !== id) };
+      return compactVisitOrders(filtered);
+    }),
   setClientVisitOrder: (id: string, newOrder: number) =>
     setState((s) => {
       const target = s.clients.find((c) => c.id === id);
@@ -617,11 +671,13 @@ export function computeRemaining(active: ActiveRoute, products: Product[]): Reco
   for (const p of products) {
     const initial = active?.initialInventory?.[p.id] ?? 0;
     let surtidoTotal = 0;
+    let devolucionTotal = 0;
     for (const sale of sales) {
       surtidoTotal += sale?.surtido?.[p.id] ?? 0;
+      devolucionTotal += sale?.devolucion?.[p.id] ?? 0;
     }
-    // Las devoluciones son merma: no se devuelven al inventario.
-    remaining[p.id] = initial - surtidoTotal;
+    // Devoluciones son merma: salen físicamente de la camioneta igual que el surtido.
+    remaining[p.id] = initial - surtidoTotal - devolucionTotal;
   }
   return remaining;
 }

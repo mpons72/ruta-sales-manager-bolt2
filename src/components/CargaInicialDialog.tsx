@@ -84,7 +84,7 @@ export function CargaInicialDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o && !unlocked) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -92,19 +92,6 @@ export function CargaInicialDialog({
             Modificar carga inicial
           </DialogTitle>
         </DialogHeader>
-
-        {!unlocked && (
-          <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs">
-            <div className="flex items-center gap-2 font-semibold text-warning">
-              <ShieldAlert className="h-4 w-4" /> Acción protegida
-            </div>
-            <p className="mt-1 text-muted-foreground">
-              {hasPassword
-                ? "Ingresa la contraseña de administrador para desbloquear los campos."
-                : "No hay contraseña configurada. Ve a Ajustes y crea una antes de continuar."}
-            </p>
-          </div>
-        )}
 
         {!unlocked && hasPassword && (
           <div className="grid gap-2">
@@ -120,6 +107,19 @@ export function CargaInicialDialog({
             <Button onClick={tryUnlock}>
               <Unlock className="mr-2 h-4 w-4" /> Desbloquear
             </Button>
+          </div>
+        )}
+
+        {!unlocked && (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs">
+            <div className="flex items-center gap-2 font-semibold text-warning">
+              <ShieldAlert className="h-4 w-4" /> Acción protegida
+            </div>
+            <p className="mt-1 text-muted-foreground">
+              {hasPassword
+                ? "Ingresa la contraseña de administrador para desbloquear los campos."
+                : "No hay contraseña configurada. Ve a Ajustes y crea una antes de continuar."}
+            </p>
           </div>
         )}
 

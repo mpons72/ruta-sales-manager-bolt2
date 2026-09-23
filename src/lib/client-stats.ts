@@ -27,7 +27,11 @@ function totalRec(r: Record<string, number> | undefined) {
 }
 
 function saleHasMovement(sale: ClientSale) {
-  return totalRec(sale.surtido) > 0 || totalRec(sale.devolucion) > 0;
+  return (
+    totalRec(sale.surtido) > 0 ||
+    totalRec(sale.devolucion) > 0 ||
+    totalRec(sale.existenciaAnterior) > 0
+  );
 }
 
 function entrySalesForClient(entry: ActiveRoute | HistoryEntry, client: Client): ClientSale[] {

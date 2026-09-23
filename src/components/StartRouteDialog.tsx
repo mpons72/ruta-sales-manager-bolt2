@@ -17,8 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { actions, useStore, productsForClients } from "@/lib/store";
-import { AdminPasswordPrompt } from "@/components/AdminPasswordPrompt";
-import { Truck, Lock, PlayCircle } from "lucide-react";
+import { Truck, Lock, Unlock, PlayCircle, RotateCcw, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 export function StartRouteDialog({
@@ -35,27 +34,14 @@ export function StartRouteDialog({
   const routes = useStore((s) => s.routes);
   const allClients = useStore((s) => s.clients);
   const lastInitial = useStore((s) => s.active?.initialInventory);
+  const hasPassword = useStore((s) => !!s.adminPasswordHash);
 
   const [routeId, setRouteId] = useState(routes[0]?.id ?? "");
   const [values, setValues] = useState<Record<string, string>>({});
   const [unlocked, setUnlocked] = useState(false);
-  const [askPwd, setAskPwd] = useState(false);
-
-  const handlePasswordConfirm = () => {
-    setUnlocked(true);
-    toast.success("Edición desbloqueada");
-    setAskPwd(false);
-  };
-
-  const handleDialogOpenChange = (open: boolean) => {
-    if (!open && askPwd) {
-      // Prevenir que el diálogo principal se cierre mientras el diálogo de contraseña está abierto
-      return;
-    }
-    if (!open) {
-      onClose();
-    }
-  };
+  const [showPasswordField, setShowPasswordField] = useState(false);
+  const [password, setPassword] = useState("");
+  const [verifying, setVerifying] = useState(false);
 
   const routeClients = useMemo(
     () => allClients.filter((c) => c.routeId === routeId && c.active !== false),
@@ -70,6 +56,8 @@ export function StartRouteDialog({
     if (!open) return;
     setRouteId(routes[0]?.id ?? "");
     setUnlocked(false);
+    setShowPasswordField(false);
+    setPassword("");
   }, [open, routes]);
 
   useEffect(() => {
@@ -86,6 +74,31 @@ export function StartRouteDialog({
     [products, values],
   );
 
+  const tryUnlock = async () => {
+    if (!hasPassword) {
+      toast.error("Configura una contraseña de administrador en Ajustes");
+      return;
+    }
+    setVerifying(true);
+    try {
+      const ok = await actions.verifyAdminPassword(password);
+      if (!ok) {
+        toast.error("Contraseña incorrecta");
+        setVerifying(false);
+        return;
+      }
+      setUnlocked(true);
+      setShowPasswordField(false);
+      setPassword("");
+      toast.success("Edición desbloqueada");
+    } catch (error) {
+      console.error("Error unlocking:", error);
+      toast.error("Error al verificar contraseña");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const start = () => {
     if (!routeId) {
       toast.error("Selecciona una ruta");
@@ -100,96 +113,134 @@ export function StartRouteDialog({
   };
 
   return (
-    <>
-      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Truck className="h-5 w-5 text-primary" /> Preparación de carga
-            </DialogTitle>
-          </DialogHeader>
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Truck className="h-5 w-5 text-primary" /> Preparación de carga
+          </DialogTitle>
+        </DialogHeader>
 
-          <div className="grid gap-2">
-            <Label>Ruta</Label>
-            <Select value={routeId} onValueChange={setRouteId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona una ruta" />
-              </SelectTrigger>
-              <SelectContent>
-                {routes.map((r) => (
-                  <SelectItem key={r.id} value={r.id}>
-                    {r.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="grid gap-2">
+          <Label>Ruta</Label>
+          <Select value={routeId} onValueChange={setRouteId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Selecciona una ruta" />
+            </SelectTrigger>
+            <SelectContent>
+              {routes.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-          <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-xs">
-            <span className="text-muted-foreground">
-              Carga inicial por producto (piezas)
+        <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-xs">
+          <span className="text-muted-foreground">
+            Carga inicial por producto (piezas)
+          </span>
+          {unlocked ? (
+            <span className="font-semibold text-success flex items-center gap-1">
+              <Unlock className="h-3.5 w-3.5" /> Desbloqueado
             </span>
-            {unlocked ? (
-              <span className="font-semibold text-success">Desbloqueado</span>
-            ) : (
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowPasswordField(true)}
+            >
+              <Lock className="mr-1.5 h-3.5 w-3.5" /> Desbloquear edición
+            </Button>
+          )}
+        </div>
+
+        {showPasswordField && !unlocked && (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-warning">
+              <ShieldAlert className="h-4 w-4" /> Contraseña de administrador
+            </div>
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                autoFocus
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
+                placeholder="••••"
+                className="flex-1"
+              />
               <Button
                 size="sm"
-                variant="outline"
-                onClick={() => setAskPwd(true)}
+                onClick={tryUnlock}
+                disabled={verifying}
               >
-                <Lock className="mr-1.5 h-3.5 w-3.5" /> Desbloquear edición
+                <Unlock className="mr-1 h-3.5 w-3.5" />
+                {verifying ? "..." : "OK"}
               </Button>
-            )}
-          </div>
-
-          <div className="max-h-[45vh] space-y-2 overflow-y-auto">
-            {products.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5"
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setShowPasswordField(false); setPassword(""); }}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium break-words">{p.name}</div>
-                  <div className="text-[10px] text-muted-foreground">
-                    ${p.price.toFixed(2)}
-                  </div>
+                ✕
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div className="max-h-[40vh] space-y-2 overflow-y-auto">
+          {products.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium break-words">{p.name}</div>
+                <div className="text-[10px] text-muted-foreground">
+                  ${p.price.toFixed(2)}
                 </div>
-                <Input
-                  type="number"
-                  min={0}
-                  value={values[p.id] ?? ""}
-                  disabled={!unlocked}
-                  onChange={(e) => setValues({ ...values, [p.id]: e.target.value })}
-                  className="h-9 w-20 text-center"
-                />
               </div>
-            ))}
-          </div>
+              <Input
+                type="number"
+                min={0}
+                value={values[p.id] ?? ""}
+                disabled={!unlocked}
+                onChange={(e) =>
+                  setValues({ ...values, [p.id]: e.target.value })
+                }
+                className="h-9 w-20 text-center"
+              />
+            </div>
+          ))}
+        </div>
 
-          <div className="flex items-center justify-between rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-bold">
-            <span className="text-muted-foreground">Total piezas</span>
-            <span className="tabular-nums">{totalUnits}</span>
-          </div>
+        <div className="flex items-center justify-between rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-bold">
+          <span className="text-muted-foreground">Total piezas</span>
+          <span className="tabular-nums">{totalUnits}</span>
+        </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={onClose}>
-              Cancelar
+        <DialogFooter className="flex flex-col gap-2 sm:flex-row">
+          {unlocked && (
+            <Button
+              variant="outline"
+              onClick={() =>
+                setValues(Object.fromEntries(products.map((p) => [p.id, "0"])))
+              }
+              className="sm:mr-auto"
+            >
+              <RotateCcw className="mr-2 h-4 w-4" /> Todo en 0
             </Button>
-            <Button onClick={start}>
-              <PlayCircle className="mr-2 h-4 w-4" /> Iniciar ruta
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AdminPasswordPrompt
-        open={askPwd}
-        title="Modificar carga inicial"
-        description="Ingresa la contraseña de administrador para editar las cantidades."
-        onConfirm={handlePasswordConfirm}
-        onClose={() => setAskPwd(false)}
-        closeOnConfirm={false}
-      />
-    </>
+          )}
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={start}>
+            <PlayCircle className="mr-2 h-4 w-4" /> Iniciar ruta
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

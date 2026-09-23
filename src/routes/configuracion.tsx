@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { backupFilename } from "@/lib/backup";
+import { saveAndShareFile } from "@/lib/nativeIO";
 import { actions, useStore, productsForClient, type SpecialPricing, type ProductGroup } from "@/lib/store";
 import { captureLocation, mapsUrl, openMapChooser } from "@/lib/geo";
 import { getAskEachTime } from "@/lib/nav-provider";
@@ -310,6 +311,34 @@ export function ClientsTab() {
 
   return (
     <Card className="p-5">
+      <div className="mb-4 rounded-lg border-2 border-primary/30 bg-primary/5 p-3">
+        <p className="text-xs font-semibold text-primary mb-2 flex items-center gap-1">
+          <Search className="h-3.5 w-3.5" /> Buscar cliente
+        </p>
+        <div className="grid gap-2 md:grid-cols-[1fr_2fr]">
+          <Select value={filterRouteId} onValueChange={setFilterRouteId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Filtrar por ruta" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las rutas</SelectItem>
+              {routes.map((r) => (
+                <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar cliente o negocio…"
+              className="pl-9 text-base h-11 font-medium"
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="mb-2 grid gap-3 md:grid-cols-[1fr_1fr_10rem_6rem_auto]">
         <Input placeholder="Nombre del cliente" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="flex gap-2">
@@ -425,30 +454,6 @@ export function ClientsTab() {
       )}
 
       <GpxImportRow />
-
-
-      <div className="mb-3 grid gap-2 md:grid-cols-[1fr_2fr]">
-        <Select value={filterRouteId} onValueChange={setFilterRouteId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Filtrar por ruta" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todas las rutas</SelectItem>
-            {routes.map((r) => (
-              <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar cliente o negocio…"
-            className="pl-9"
-          />
-        </div>
-      </div>
 
       {(() => {
         const routeIds = new Set(routes.map((r) => r.id));
@@ -1102,60 +1107,17 @@ function ClientSpecialPricingList({
 export function BackupTab() {
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const generate = async () => {
+  const exportBackup = async () => {
     try {
       const json = actions.exportData();
       const filename = backupFilename();
-
-      const nav = navigator as Navigator & {
-        share?: (d: ShareData) => Promise<void>;
-        canShare?: (d: ShareData) => boolean;
-      };
-
-      // 1) Web Share API con archivo (Android moderno, iOS, WebView con share habilitado)
-      if (nav.share && typeof File !== "undefined") {
-        try {
-          const file = new File([json], filename, { type: "application/json" });
-          const shareData: ShareData = {
-            files: [file],
-            title: filename,
-            text: "Respaldo de Ventas Salsa",
-          };
-          if (!nav.canShare || nav.canShare(shareData)) {
-            await nav.share(shareData);
-            toast.success("Respaldo compartido");
-            return;
-          }
-        } catch (err) {
-          if ((err as Error)?.name === "AbortError") return;
-          // continúa a fallback
-        }
-      }
-
-      // 2) Web Share solo con texto — comparte el JSON como texto
-      if (nav.share) {
-        try {
-          await nav.share({ title: filename, text: json });
-          toast.success("Respaldo compartido como texto");
-          return;
-        } catch (err) {
-          if ((err as Error)?.name === "AbortError") return;
-        }
-      }
-
-      // 3) Descarga clásica con anchor (data URL para máxima compatibilidad en WebView)
-      const dataUrl = "data:application/json;charset=utf-8," + encodeURIComponent(json);
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = filename;
-      a.rel = "noopener";
-      a.target = "_blank";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      toast.success("Respaldo descargado");
+      await saveAndShareFile({
+        filename,
+        data: json,
+        mimeType: "application/json",
+      });
     } catch (e) {
-      toast.error("No se pudo generar: " + (e as Error).message);
+      toast.error("No se pudo generar el respaldo: " + ((e as Error)?.message ?? "error"));
     }
   };
 
@@ -1185,8 +1147,8 @@ export function BackupTab() {
         o restaura desde un respaldo previo.
       </p>
       <div className="flex flex-col gap-3 sm:flex-row">
-        <Button onClick={generate}>
-          <Download className="mr-2 h-4 w-4" /> Generar Respaldo
+        <Button onClick={exportBackup}>
+          <Download className="mr-2 h-4 w-4" /> Generar respaldo
         </Button>
         <Button variant="outline" onClick={() => fileRef.current?.click()}>
           <Upload className="mr-2 h-4 w-4" /> Importar Datos
@@ -1287,7 +1249,7 @@ function GpxImportRow() {
           `No se encontró ningún cliente que coincida con los nombres del .gpx (${stops.length} paradas)`,
         );
       } else {
-        toast.success(`Ubicaciones restauradas en ${matched} cliente(s)`);
+        toast.success(`${matched} cliente(s) procesados (actualizados o creados desde GPX)`);
       }
       if (missed.length > 0) {
         toast.warning(

@@ -14,7 +14,7 @@ import {
 } from "@/lib/store";
 import { getLastPurchase } from "@/lib/client-stats";
 import { exportReportCSV, exportReportJSON, exportReportPDF } from "@/lib/export";
-import { DollarSign, Users, TrendingUp, FileDown, FileText, Share2 } from "lucide-react";
+import { DollarSign, Users, TrendingUp, FileDown, FileText, Share2, ArrowLeft } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
@@ -83,6 +83,20 @@ function ReportePage() {
     <div className="min-h-screen" style={{ background: "var(--gradient-warm)" }}>
       <AppHeader />
       <main className="mx-auto max-w-6xl px-4 py-6">
+        <div className="mb-4 flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm" className="-ml-2">
+            <Link to="/historial">
+              <ArrowLeft className="mr-1 h-4 w-4" /> Historial
+            </Link>
+          </Button>
+          {active && (
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/ruta">
+                <ArrowLeft className="mr-1 h-4 w-4" /> Ruta del día
+              </Link>
+            </Button>
+          )}
+        </div>
         <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="text-xs uppercase tracking-wider text-muted-foreground">

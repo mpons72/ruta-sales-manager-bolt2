@@ -37,7 +37,7 @@ import { VerifyAddressDialog } from "@/components/VerifyAddressDialog";
 import { buildGpx, downloadGpx } from "@/lib/gpx";
 import { getLastPurchase, getClientTopProducts, getAllPurchases } from "@/lib/client-stats";
 import { toast } from "sonner";
-import { CheckCircle2, MapPin, Truck, ArrowRight, Flag, Sparkles, Navigation, Lock, ChevronDown, ChevronUp, CreditCard, Banknote, Crosshair, Loader2, Printer, Download, BarChart3, History, ShieldCheck } from "lucide-react";
+import { CheckCircle2, MapPin, Truck, ArrowRight, Flag, Sparkles, Navigation, Lock, ChevronDown, ChevronUp, CreditCard, Banknote, Crosshair, Loader2, Printer, Download, BarChart3, History, ShieldCheck, Plus, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { RemisionData } from "@/lib/remision";
@@ -70,6 +70,8 @@ function RutaPage() {
   const [abriendoTramo, setAbriendoTramo] = useState<number | null>(null);
   const [verifyClientId, setVerifyClientId] = useState<string | null>(null);
   const [receiptData, setReceiptData] = useState<RemisionData | null>(null);
+  const [showAddClient, setShowAddClient] = useState(false);
+  const [addClientSearch, setAddClientSearch] = useState("");
 
   const capturarUbicacion = async (clientId: string, currentLat?: number | null) => {
     if (currentLat != null) {
@@ -115,6 +117,29 @@ function RutaPage() {
       .filter((c) => c.routeId === active.routeId)
       .sort((a, b) => a.visitOrder - b.visitOrder);
   }, [allClients, active]);
+
+  const currentClientIds = useMemo(() => {
+    if (!active) return new Set<string>();
+    if (active.clientIds && active.clientIds.length > 0) {
+      return new Set(active.clientIds);
+    }
+    return new Set(clients.map((c) => c.id));
+  }, [active, clients]);
+
+  const addClientToRoute = (clientId: string) => {
+    if (!active) return;
+    const existing = active.clientIds && active.clientIds.length > 0
+      ? active.clientIds
+      : clients.map((c) => c.id);
+    if (existing.includes(clientId)) {
+      toast.info("Este cliente ya está en la ruta");
+      return;
+    }
+    actions.reorderActiveClients([...existing, clientId]);
+    toast.success("Cliente agregado a la ruta del día");
+    setShowAddClient(false);
+    setAddClientSearch("");
+  };
 
   const products = useMemo(
     () => productsForClients(allProducts, groups, clients),
@@ -419,10 +444,20 @@ function RutaPage() {
             <div className="text-xs text-muted-foreground">
               {clients.length - visited} clientes pendientes en la ruta
             </div>
-            <Button onClick={optimizarRecorrido} size="lg" className="mt-3 w-full">
-              <Sparkles className="mr-2 h-4 w-4" />
-              Optimizar Recorrido (menor tiempo y combustible)
-            </Button>
+            <div className="mt-2 flex gap-2">
+              <Button onClick={optimizarRecorrido} size="lg" className="flex-1">
+                <Sparkles className="mr-2 h-4 w-4" />
+                Optimizar Recorrido
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowAddClient(true)}
+                className="gap-1"
+              >
+                <Plus className="h-3.5 w-3.5" /> Cliente externo
+              </Button>
+            </div>
             {tramos.length > 0 && (
               <div className="mt-2 grid gap-2">
                 {(navProvider === "sygic"
@@ -744,6 +779,72 @@ function RutaPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showAddClient && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-background p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold">Agregar cliente externo</h3>
+              <button
+                onClick={() => { setShowAddClient(false); setAddClientSearch(""); }}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Busca un cliente de cualquier ruta para agregarlo a la visita de hoy.
+              El producto se descontará del inventario actual.
+            </p>
+            <input
+              type="text"
+              value={addClientSearch}
+              onChange={(e) => setAddClientSearch(e.target.value)}
+              placeholder="Buscar por nombre..."
+              className="mb-3 w-full rounded-lg border bg-muted/30 px-3 py-2 text-sm"
+              autoFocus
+            />
+            <div className="max-h-[40vh] space-y-1 overflow-y-auto">
+              {allClients
+                .filter((c) =>
+                  c.active !== false &&
+                  !currentClientIds.has(c.id) &&
+                  (addClientSearch.trim() === "" ||
+                   c.name.toLowerCase().includes(addClientSearch.toLowerCase()) ||
+                   (c.address ?? "").toLowerCase().includes(addClientSearch.toLowerCase()))
+                )
+                .slice(0, 20)
+                .map((c) => {
+                  const routeName = routes.find((r) => r.id === c.routeId)?.name ?? "";
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => addClientToRoute(c.id)}
+                      className="flex w-full items-start gap-2 rounded-lg border border-border/50 bg-card p-2.5 text-left hover:border-primary/50 hover:bg-primary/5"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium">{c.name}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {routeName}{c.address ? ` · ${c.address}` : ""}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              {allClients.filter((c) =>
+                c.active !== false &&
+                !currentClientIds.has(c.id) &&
+                (addClientSearch.trim() === "" ||
+                 c.name.toLowerCase().includes(addClientSearch.toLowerCase()))
+              ).length === 0 && (
+                <p className="py-4 text-center text-sm text-muted-foreground">
+                  No se encontraron clientes disponibles
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -811,11 +912,14 @@ function ClientDialog({
   const computeQueda = (productId: string) => {
     const initial = active.initialInventory[productId] ?? 0;
     let surtTotal = 0;
+    let devTotal = 0;
     for (const [cid, sale] of Object.entries(active.sales)) {
       surtTotal += sale.surtido[productId] ?? 0;
+      devTotal += sale.devolucion[productId] ?? 0;
     }
     surtTotal += Number(surtido[productId] || 0);
-    return initial - surtTotal;
+    devTotal += Number(devolucion[productId] || 0);
+    return initial - surtTotal - devTotal;
   };
 
   const effectivePrices = getEffectivePrices(client, products);
