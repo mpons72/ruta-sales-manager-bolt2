@@ -180,7 +180,7 @@ function ReportBody({
         porProducto[p.id].surtido += s;
         porProducto[p.id].devolucion += d;
         porProducto[p.id].venta += s - d;
-        porProducto[p.id].dinero += (s - d) * priceFor(sale, p);
+        porProducto[p.id].dinero += s * priceFor(sale, p);
       }
       const amt = clientSaleAmount(sale, products);
       totalDinero += amt;
@@ -218,14 +218,15 @@ function ReportBody({
         <Card className="p-5">
           <h2 className="mb-4 text-lg font-semibold">Resumen por producto</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-base">
+            <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-left text-sm uppercase text-muted-foreground">
-                  <th className="py-2">Producto</th>
-                  <th className="py-2 text-right">Inicial</th>
-                  <th className="py-2 text-right">Vendido</th>
-                  <th className="py-2 text-right">Restante</th>
-                  <th className="py-2 text-right">$</th>
+                <tr className="border-b text-left text-[10px] uppercase text-muted-foreground">
+                  <th className="py-2 px-2 text-left">Producto</th>
+                  <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Inicial</th>
+                  <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Surt.</th>
+                  <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Dev.</th>
+                  <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Resta</th>
+                  <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">$</th>
                 </tr>
               </thead>
               <tbody>
@@ -233,13 +234,14 @@ function ReportBody({
                   const v = summary.porProducto[p.id];
                   return (
                     <tr key={p.id} className="border-b last:border-0">
-                      <td className="py-2.5 font-semibold">{p.name}</td>
-                      <td className="py-2.5 text-right text-lg tabular-nums">{target.initialInventory?.[p.id] ?? 0}</td>
-                      <td className="py-2.5 text-right text-lg font-semibold tabular-nums">{v.venta}</td>
-                      <td className={`py-2.5 text-right text-lg font-bold tabular-nums ${remaining[p.id] < 0 ? "text-destructive" : ""}`}>
+                      <td className="py-2 px-2 font-semibold whitespace-nowrap">{p.name}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-sm whitespace-nowrap">{target.initialInventory?.[p.id] ?? 0}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-sm font-semibold whitespace-nowrap">{v.surtido}</td>
+                      <td className={`py-2 px-2 text-right tabular-nums text-sm whitespace-nowrap ${v.devolucion > 0 ? "text-orange-500" : ""}`}>{v.devolucion}</td>
+                      <td className={`py-2 px-2 text-right tabular-nums text-sm font-bold whitespace-nowrap ${remaining[p.id] < 0 ? "text-destructive" : ""}`}>
                         {remaining[p.id]}
                       </td>
-                      <td className="py-2.5 text-right text-lg font-extrabold tabular-nums text-primary">${v.dinero.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-sm font-extrabold whitespace-nowrap text-primary">${v.dinero.toFixed(2)}</td>
                     </tr>
                   );
                 })}
