@@ -912,14 +912,11 @@ function ClientDialog({
   const computeQueda = (productId: string) => {
     const initial = active.initialInventory[productId] ?? 0;
     let surtTotal = 0;
-    let devTotal = 0;
     for (const [cid, sale] of Object.entries(active.sales)) {
       surtTotal += sale.surtido[productId] ?? 0;
-      devTotal += sale.devolucion[productId] ?? 0;
     }
     surtTotal += Number(surtido[productId] || 0);
-    devTotal += Number(devolucion[productId] || 0);
-    return initial - surtTotal - devTotal;
+    return initial - surtTotal;
   };
 
   const effectivePrices = getEffectivePrices(client, products);

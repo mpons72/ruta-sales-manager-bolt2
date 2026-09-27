@@ -671,13 +671,10 @@ export function computeRemaining(active: ActiveRoute, products: Product[]): Reco
   for (const p of products) {
     const initial = active?.initialInventory?.[p.id] ?? 0;
     let surtidoTotal = 0;
-    let devolucionTotal = 0;
     for (const sale of sales) {
       surtidoTotal += sale?.surtido?.[p.id] ?? 0;
-      devolucionTotal += sale?.devolucion?.[p.id] ?? 0;
     }
-    // Devoluciones son merma: salen físicamente de la camioneta igual que el surtido.
-    remaining[p.id] = initial - surtidoTotal - devolucionTotal;
+    remaining[p.id] = initial - surtidoTotal;
   }
   return remaining;
 }

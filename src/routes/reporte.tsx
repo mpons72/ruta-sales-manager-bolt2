@@ -373,6 +373,7 @@ function ClientSalesList({
                   <thead>
                     <tr className="text-left text-[11px] uppercase text-muted-foreground">
                       <th className="py-1 pr-2">Sabor</th>
+                      <th className="py-1 px-2 text-right tabular-nums text-[11px] uppercase tracking-wider text-muted-foreground">Antes</th>
                       <th className="py-1 px-2 text-right">Surtido</th>
                       <th className="py-1 px-2 text-right">Dev.</th>
                       <th className="py-1 px-2 text-right">Vendido</th>
@@ -383,11 +384,13 @@ function ClientSalesList({
                     {products.map((p) => {
                       const s = sale?.surtido?.[p.id] ?? 0;
                       const d = sale?.devolucion?.[p.id] ?? 0;
+                      const a = sale?.existenciaAnterior?.[p.id] ?? 0;
                       const v = s - d;
-                      if (s === 0 && d === 0) return null;
+                      if (s === 0 && d === 0 && a === 0) return null;
                       return (
                         <tr key={p.id} className="border-t border-border/40">
                           <td className="py-1.5 pr-2 font-medium">{p.name}</td>
+                          <td className="py-1.5 px-2 text-right tabular-nums">{a}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{s}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{d}</td>
                           <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{v}</td>
@@ -397,9 +400,9 @@ function ClientSalesList({
                         </tr>
                       );
                     })}
-                    {products.every((p) => !(sale?.surtido?.[p.id] || sale?.devolucion?.[p.id])) && (
+                    {products.every((p) => !(sale?.surtido?.[p.id] || sale?.devolucion?.[p.id] || sale?.existenciaAnterior?.[p.id])) && (
                       <tr>
-                        <td colSpan={5} className="py-2 text-center text-xs text-muted-foreground">
+                        <td colSpan={6} className="py-2 text-center text-xs text-muted-foreground">
                           Sin movimientos por sabor.
                         </td>
                       </tr>
