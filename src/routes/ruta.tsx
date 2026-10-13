@@ -575,49 +575,43 @@ function RutaPage() {
                     </div>
                   )}
                 </div>
-                {c.lat != null && c.lng != null ? (
-                  askEachTime ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openMapChooser(c.lat, c.lng, c.address, c.placeId);
-                      }}
-                      className="border-primary/40 text-primary hover:bg-primary/10"
-                    >
-                      <MapPin className="mr-1.5 h-3.5 w-3.5" /> Mapa
-                    </Button>
-                  ) : navProvider === "sygic" ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openSygic(c.lat!, c.lng!);
-                      }}
-                      className="border-primary/40 text-primary hover:bg-primary/10"
-                    >
-                      <MapPin className="mr-1.5 h-3.5 w-3.5" /> Sygic
-                    </Button>
-                  ) : (
-                    <Button
-                      asChild
-                      size="sm"
-                      variant="outline"
-                      className="border-primary/40 text-primary hover:bg-primary/10"
-                    >
-                      <a
-                        href={mapsUrl(c.lat, c.lng, c.address, c.placeId)}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                {c.lat != null && c.lng != null && (
+                    askEachTime ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openMapChooser(c.lat, c.lng, c.address, c.placeId);
+                        }}
                       >
                         <MapPin className="mr-1.5 h-3.5 w-3.5" /> Mapa
-                      </a>
-                    </Button>
-                  )
-                ) : (
+                      </Button>
+                    ) : navProvider === "sygic" ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openSygic(c.lat!, c.lng!);
+                        }}
+                      >
+                        <MapPin className="mr-1.5 h-3.5 w-3.5" /> Sygic
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" asChild>
+                        <a
+                          href={mapsUrl(c.lat, c.lng, c.address, c.placeId)}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <MapPin className="mr-1.5 h-3.5 w-3.5" /> Maps
+                        </a>
+                      </Button>
+                    )
+                  )}
+                {c.lat == null || c.lng == null && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -952,7 +946,20 @@ function ClientDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => {
+    if (!o) {
+      // Auto-save draft if any field has data before closing
+      const hasAnyData =
+        products.some((p) => Number(existenciaAnterior[p.id] || 0) > 0) ||
+        products.some((p) => Number(surtido[p.id] || 0) > 0) ||
+        products.some((p) => Number(devolucion[p.id] || 0) > 0) ||
+        notes.trim().length > 0;
+      if (hasAnyData) {
+        actions.saveClientSale(clientId, buildSale(false));
+      }
+      onClose();
+    }
+  }}>
       <DialogContent className="flex max-h-[95vh] w-[95vw] max-w-3xl flex-col gap-3 p-4 sm:p-6">
         <DialogHeader className="shrink-0">
           <DialogTitle>
