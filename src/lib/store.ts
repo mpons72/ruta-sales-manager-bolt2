@@ -334,12 +334,19 @@ export const actions = {
         updates.set(target.id, {
           lat: stop.lat,
           lng: stop.lng,
+          ...(stop.visitOrder !== undefined ? { visitOrder: stop.visitOrder } : {}),
           ...(stop.address && !target.address ? { address: stop.address } : {}),
         });
       }
+      const updatedClients = s.clients.map((c) => (updates.has(c.id) ? { ...c, ...updates.get(c.id)! } : c));
+      // Sort clients by routeId and then by visitOrder to ensure correct rendering
+      updatedClients.sort((a, b) => {
+        if (a.routeId !== b.routeId) return a.routeId.localeCompare(b.routeId);
+        return (a.visitOrder || 999) - (b.visitOrder || 999);
+      });
       return {
         ...s,
-        clients: s.clients.map((c) => (updates.has(c.id) ? { ...c, ...updates.get(c.id)! } : c)),
+        clients: updatedClients,
       };
     });
     return { matched, missed };
