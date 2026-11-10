@@ -22,7 +22,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
   // En nativo, usar Capacitor
   try {
     const result = await LocalNotifications.requestPermissions();
-    return result.display === 'granted' || result.display === 'limited';
+    return result.display === 'granted' || (result.display as string) === 'limited';
   } catch (error) {
     console.error('Error requesting native notification permission:', error);
     // Asumir permiso concedido si hay error (para evitar bloqueos)
@@ -37,7 +37,7 @@ export async function checkNotificationPermission(): Promise<boolean> {
 
   try {
     const result = await LocalNotifications.checkPermissions();
-    return result.display === 'granted' || result.display === 'limited';
+    return result.display === 'granted' || (result.display as string) === 'limited';
   } catch (error) {
     console.error('Error checking notification permission:', error);
     // Asumir permiso concedido si hay error

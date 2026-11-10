@@ -205,11 +205,13 @@ export function BusinessInfoCard() {
         </Button>
       </div>
 
-      <ReceiptDialog 
-        open={receiptData !== null}
-        onOpenChange={(open) => !open && setReceiptData(null)}
-        data={receiptData || undefined}
-      />
+      {receiptData && (
+        <ReceiptDialog
+          open
+          onOpenChange={(open) => !open && setReceiptData(null)}
+          data={receiptData}
+        />
+      )}
 
       <NoteSettingsDialog
         open={noteSettingsOpen}

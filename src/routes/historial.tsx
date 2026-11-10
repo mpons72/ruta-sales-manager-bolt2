@@ -560,11 +560,13 @@ function HistorialPage() {
         </DialogContent>
       </Dialog>
 
-      <ReceiptDialog 
-        open={receiptData !== null}
-        onOpenChange={(open) => !open && setReceiptData(null)}
-        data={receiptData || undefined}
-      />
+      {receiptData && (
+        <ReceiptDialog
+          open
+          onOpenChange={(open) => !open && setReceiptData(null)}
+          data={receiptData}
+        />
+      )}
     </div>
   );
 }

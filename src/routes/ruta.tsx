@@ -418,9 +418,9 @@ function RutaPage() {
               <h2 className="text-lg font-bold">Camioneta</h2>
             </div>
             <Button
-              size="icon"
+              size="sm"
               variant="outline"
-              className="border-white/30 bg-black/30 text-white hover:bg-black/50"
+              className="shrink-0 whitespace-nowrap border-white/30 bg-black/30 text-white hover:bg-black/50"
               onClick={() => setOpenCarga(true)}
             >
               <Lock className="mr-1.5 h-3.5 w-3.5" /> Modificar carga
@@ -743,11 +743,13 @@ function RutaPage() {
 
       <CargaInicialDialog open={openCarga} onClose={() => setOpenCarga(false)} />
 
-      <ReceiptDialog 
-        open={receiptData !== null}
-        onOpenChange={(open) => !open && setReceiptData(null)}
-        data={receiptData || undefined}
-      />
+      {receiptData && (
+        <ReceiptDialog
+          open
+          onOpenChange={(open) => !open && setReceiptData(null)}
+          data={receiptData}
+        />
+      )}
 
       <Dialog open={confirmEnd} onOpenChange={setConfirmEnd}>
         <DialogContent>

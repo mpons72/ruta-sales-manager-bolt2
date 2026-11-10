@@ -245,24 +245,27 @@ export function ClientsTab() {
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [routeId, setRouteId] = useState(routes[0]?.id ?? "");
   const [order, setOrder] = useState("");
+  // Al agregar un cliente nuevo, habilita Bolsa 290 gms. La botella
+  // salsera 200 ml y Bolsa 200 gms quedan deshabilitadas hasta activarlas.
+  const pickDefaultGroups = (gs: { id: string; name: string }[]) => {
+    const bolsa = gs.find((g) => /bolsa\s*290\s*gms?/i.test(g.name))
+      ?? gs.find((g) => /bolsa/i.test(g.name) && !/200\s*gms?/i.test(g.name));
+    const fallback = bolsa ?? gs[0];
+    return new Set<string>(fallback ? [fallback.id] : []);
+  };
   const [newEnabledGroups, setNewEnabledGroups] = useState<Set<string>>(
-    () => new Set(groups.map((g) => g.id)),
+    () => pickDefaultGroups(groups),
   );
   useEffect(() => {
-    // Por defecto: TODOS los grupos quedan habilitados al crear un cliente
-    // nuevo. Si en algún momento aparecen grupos nuevos en el catálogo,
-    // también quedan habilitados automáticamente.
+    // Sincroniza con el catálogo: quita ids que ya no existen y, si el
+    // conjunto queda vacío, vuelve al grupo por defecto (Bolsa 290 gms). Nunca
+    // habilita grupos nuevos automáticamente: eso es decisión manual.
     setNewEnabledGroups((prev) => {
       const allIds = groups.map((g) => g.id);
       if (allIds.length === 0) return prev;
-      // Si el set previo no incluía a todos los grupos existentes,
-      // asumimos que es estado inicial/desactualizado y lo reseteamos.
-      const missingAny = allIds.some((id) => !prev.has(id));
-      if (missingAny) return new Set(allIds);
-      // Quitar ids que ya no existen
       const next = new Set<string>();
       for (const id of allIds) if (prev.has(id)) next.add(id);
-      return next.size === 0 ? new Set(allIds) : next;
+      return next.size === 0 ? pickDefaultGroups(groups) : next;
     });
   }, [groups]);
   const [capturingNew, setCapturingNew] = useState(false);
@@ -298,7 +301,7 @@ export function ClientsTab() {
         address: r.address,
         lat: r.lat,
         lng: r.lng,
-        placeId: null,
+        placeId: undefined,
         verifiedAddress: undefined,
       });
       toast.success("Ubicación GPS actualizada — para mayor exactitud usa 'Verificar' con Google");
@@ -396,7 +399,8 @@ export function ClientsTab() {
                 : {}),
             });
             setName(""); setAddress(""); setOrder(""); setCoords(null); setPlaceId(null);
-            setNewEnabledGroups(new Set(allIds));
+            // Cada cliente nuevo vuelve a empezar solo con "Bolsa 290 gms" habilitado.
+            setNewEnabledGroups(pickDefaultGroups(groups));
           }}
         >
           <Plus className="mr-2 h-4 w-4" /> Agregar
