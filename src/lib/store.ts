@@ -4,7 +4,22 @@ export const DEFAULT_GROUP_ID = "g-default";
 export type ProductGroup = { id: string; name: string };
 export type Product = { id: string; name: string; price: number; description?: string; groupId?: string };
 export type SpecialPricing = { enabled: boolean; prices: Record<string, number> };
-export type Client = { id: string; name: string; address?: string; lat?: number; lng?: number; placeId?: string; verifiedAddress?: string; routeId: string; visitOrder: number; active?: boolean; credit?: boolean; specialPricing?: SpecialPricing; enabledGroupIds?: string[] };
+export type CreditType = "ninguno" | "A" | "B";
+export type CreditAccountType = "client" | "chain";
+export type CreditMovementType = "venta" | "cobro" | "ajuste" | "factura" | "pago";
+export type CreditMovement = {
+  id: string;
+  date: string;
+  type: CreditMovementType;
+  accountType: CreditAccountType;
+  accountId: string;
+  /** Signed change: sales add; collections/payments subtract; adjustments may be either sign. */
+  pieces: number;
+  amount: number;
+  /** Stable reference to the sale that originated this movement, when applicable. */
+  saleRef?: string;
+};
+export type Client = { id: string; name: string; address?: string; lat?: number; lng?: number; placeId?: string; verifiedAddress?: string; routeId: string; visitOrder: number; active?: boolean; credit?: boolean; creditType?: CreditType; specialPricing?: SpecialPricing; enabledGroupIds?: string[] };
 export type Route = { id: string; name: string };
 
 export type ClientSale = {
@@ -59,6 +74,7 @@ export type AppState = {
   routes: Route[];
   active: ActiveRoute | null;
   history: HistoryEntry[];
+  creditLedger: CreditMovement[];
   theme: Theme;
   adminPasswordHash: string | null;
   audit: AuditEntry[];
@@ -82,6 +98,7 @@ const defaults: AppState = {
   clients: [],
   active: null,
   history: [],
+  creditLedger: [],
   theme: "dark",
   adminPasswordHash: null,
   audit: [],
@@ -265,7 +282,7 @@ export const actions = {
       );
       return {
         ...s,
-        clients: [...shifted, { id: uid(), ...c, visitOrder: insertAt }],
+        clients: [...shifted, { id: uid(), ...c, creditType: c.creditType ?? "ninguno", visitOrder: insertAt }],
       };
     }),
   updateClient: (id: string, patch: Partial<Client>) =>
@@ -534,6 +551,8 @@ function migrateImported(raw: any): any {
       const lng = toNumber(c.lng ?? c.lon ?? c.longitude ?? c.location?.lng ?? c.location?.lon ?? c.coords?.lng ?? c.coords?.lon);
       return {
         ...c,
+        // La marca histórica `credit` es solo una etiqueta y no asigna un tipo.
+        creditType: c.creditType === "A" || c.creditType === "B" ? c.creditType : "ninguno",
         address: c.address ?? c.direccion ?? c.direction ?? c.location?.address ?? c.ubicacion ?? "",
         ...(lat == null ? {} : { lat }),
         ...(lng == null ? {} : { lng }),
@@ -541,6 +560,23 @@ function migrateImported(raw: any): any {
       };
     });
   }
+
+  // Backups anteriores no incluyen ledger; mantenerlos válidos con uno vacío.
+  out.creditLedger = Array.isArray(raw.creditLedger)
+    ? raw.creditLedger
+        .filter((m: any) => m && typeof m === "object")
+        .map((m: any) => ({
+          ...m,
+          id: String(m.id ?? uid()),
+          date: String(m.date ?? new Date(0).toISOString()),
+          type: ["venta", "cobro", "ajuste", "factura", "pago"].includes(m.type) ? m.type : "ajuste",
+          accountType: m.accountType === "chain" ? "chain" : "client",
+          accountId: String(m.accountId ?? ""),
+          pieces: Number.isFinite(Number(m.pieces)) ? Number(m.pieces) : 0,
+          amount: Number.isFinite(Number(m.amount)) ? Number(m.amount) : 0,
+          ...(typeof m.saleRef === "string" ? { saleRef: m.saleRef } : {}),
+        }))
+    : [];
 
   const migrateRouteLike = (r: any) => {
     if (!r || typeof r !== "object") return r;
@@ -750,6 +786,24 @@ export function clientSaleAmount(sale: ClientSale, products: Product[]): number 
   const precioProm = surtMonto / surtPzas;
   const netas = surtPzas - devPzas;
   return netas * precioProm;
+}
+
+/** Suma los cambios firmados del ledger para una cuenta específica. */
+export function getCreditBalance(
+  ledger: CreditMovement[],
+  accountType: CreditAccountType,
+  accountId: string,
+): { pieces: number; amount: number } {
+  return ledger.reduce(
+    (balance, movement) => {
+      if (movement.accountType !== accountType || movement.accountId !== accountId) return balance;
+      return {
+        pieces: balance.pieces + movement.pieces,
+        amount: balance.amount + movement.amount,
+      };
+    },
+    { pieces: 0, amount: 0 },
+  );
 }
 
 // Grupos habilitados para un cliente. Si no tiene `enabledGroupIds` definido,
