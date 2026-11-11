@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -24,6 +25,7 @@ import {
   actions,
   clientSaleAmount,
   computeRemaining,
+  getCreditBalance,
   getEffectivePrices,
   productsForClient,
   productsForClients,
@@ -38,7 +40,7 @@ import { buildGpx, downloadGpx } from "@/lib/gpx";
 import { getLastPurchase, getClientTopProducts, getAllPurchases } from "@/lib/client-stats";
 import { toast } from "sonner";
 import { CheckCircle2, MapPin, Truck, ArrowRight, Flag, Sparkles, Navigation, Lock, ChevronDown, ChevronUp, CreditCard, Banknote, Crosshair, Loader2, Printer, Download, BarChart3, History, ShieldCheck, Plus, X } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { RemisionData } from "@/lib/remision";
 
@@ -881,6 +883,14 @@ function ClientDialog({
   const client = useStore((s) => s.clients.find((c) => c.id === clientId));
   const existing = useStore((s) => s.active?.sales[clientId]);
   const active = useStore((s) => s.active);
+  const creditLedger = useStore((s) => s.creditLedger);
+  const saleRef = active ? `${active.routeId}:${active.date}:${clientId}` : "";
+  const priorCreditBalance = useMemo(
+    () => getCreditBalance(creditLedger.filter((movement) => movement.saleRef !== saleRef), "client", clientId),
+    [creditLedger, saleRef, clientId],
+  );
+  const priorDebtPieces = Math.max(0, priorCreditBalance.pieces);
+  const priorDebtAmount = Math.max(0, priorCreditBalance.amount);
   const products = useMemo(
     () => productsForClient(allProducts, groups, client),
     [allProducts, groups, client],
@@ -899,6 +909,23 @@ function ClientDialog({
     existing?.paymentType ?? (client?.credit ? "credit" : "cash"),
   );
   const [notes, setNotes] = useState<string>(existing?.notes ?? "");
+  const [previousPaymentAmount, setPreviousPaymentAmount] = useState(() =>
+    String(existing?.previousCreditPayment?.amount ?? (client?.creditType === "A" ? priorDebtAmount : 0)),
+  );
+  const [previousPaymentPieces, setPreviousPaymentPieces] = useState(() =>
+    String(existing?.previousCreditPayment?.pieces ?? (client?.creditType === "A" ? priorDebtPieces : 0)),
+  );
+  const [collectionEdited, setCollectionEdited] = useState(false);
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [adjustmentPieces, setAdjustmentPieces] = useState("0");
+  const [adjustmentAmount, setAdjustmentAmount] = useState("0");
+  const [adjustmentNote, setAdjustmentNote] = useState("");
+
+  useEffect(() => {
+    setPreviousPaymentAmount(String(existing?.previousCreditPayment?.amount ?? (client?.creditType === "A" ? priorDebtAmount : 0)));
+    setPreviousPaymentPieces(String(existing?.previousCreditPayment?.pieces ?? (client?.creditType === "A" ? priorDebtPieces : 0)));
+    setCollectionEdited(false);
+  }, [clientId, client?.creditType, existing?.previousCreditPayment?.amount, existing?.previousCreditPayment?.pieces, priorDebtAmount, priorDebtPieces]);
 
   if (!client || !active) return null;
 
@@ -917,6 +944,16 @@ function ClientDialog({
 
   const effectivePrices = getEffectivePrices(client, products);
 
+  const updatePreviousPaymentAmount = (value: string) => {
+    setPreviousPaymentAmount(value);
+    setCollectionEdited(true);
+    const amount = Math.max(0, Number(value) || 0);
+    const estimatedPieces = priorDebtAmount > 0 && priorDebtPieces > 0
+      ? Math.min(priorDebtPieces, Math.round(amount * priorDebtPieces / priorDebtAmount))
+      : 0;
+    setPreviousPaymentPieces(String(estimatedPieces));
+  };
+
   const buildSale = (completed: boolean): ClientSale => ({
     completed,
     paymentType,
@@ -926,6 +963,14 @@ function ClientDialog({
     existenciaActual: Object.fromEntries(products.map((p) => [p.id, 0])),
     priceSnapshot: { ...effectivePrices },
     notes: notes.trim() ? notes.trim() : undefined,
+    ...(client?.creditType === "A"
+      ? {
+          previousCreditPayment: {
+            amount: Math.max(0, Number(previousPaymentAmount) || 0),
+            pieces: Math.max(0, Number(previousPaymentPieces) || 0),
+          },
+        }
+      : {}),
   });
 
   const total = clientSaleAmount(buildSale(true), products);
@@ -948,6 +993,7 @@ function ClientDialog({
   };
 
   return (
+    <>
     <Dialog open onOpenChange={(o) => {
     if (!o) {
       // Auto-save draft if any field has data before closing
@@ -955,7 +1001,9 @@ function ClientDialog({
         products.some((p) => Number(existenciaAnterior[p.id] || 0) > 0) ||
         products.some((p) => Number(surtido[p.id] || 0) > 0) ||
         products.some((p) => Number(devolucion[p.id] || 0) > 0) ||
-        notes.trim().length > 0;
+        notes.trim().length > 0 ||
+        collectionEdited ||
+        existing?.previousCreditPayment != null;
       if (hasAnyData) {
         actions.saveClientSale(clientId, buildSale(false));
       }
@@ -975,6 +1023,47 @@ function ClientDialog({
         <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1 space-y-3">
 
         <ClientStatsPanel clientId={client.id} />
+
+        {client.creditType === "A" && (
+          <section className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Saldo de crédito</div>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm font-bold tabular-nums">
+                  <span>${priorDebtAmount.toFixed(2)} adeudados</span>
+                  <span>{priorDebtPieces} piezas pendientes</span>
+                </div>
+              </div>
+              <Button type="button" size="sm" variant="outline" onClick={() => setAdjustmentOpen(true)}>
+                Ajustar saldo
+              </Button>
+            </div>
+            <div>
+              <div className="mb-2 text-xs font-semibold">Cobro de lo anterior</div>
+              <div className="grid grid-cols-2 gap-2">
+                <FieldCell label="Dinero">
+                  <Input
+                    type="number" min={0} step="0.01" inputMode="decimal"
+                    value={previousPaymentAmount}
+                    onChange={(e) => updatePreviousPaymentAmount(e.target.value)}
+                    className="h-9 px-1 text-center" placeholder="0.00"
+                  />
+                </FieldCell>
+                <FieldCell label="Piezas abonadas">
+                  <Input
+                    type="number" min={0} step={1} inputMode="numeric"
+                    value={previousPaymentPieces}
+                    onChange={(e) => { setPreviousPaymentPieces(e.target.value); setCollectionEdited(true); }}
+                    className="h-9 px-1 text-center" placeholder="0"
+                  />
+                </FieldCell>
+              </div>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                El dinero se propone por el total adeudado; al cambiarlo, las piezas se estiman con el precio promedio de la deuda.
+              </p>
+            </div>
+          </section>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2">
           <span className="text-xs font-semibold uppercase text-muted-foreground">
@@ -1135,6 +1224,43 @@ function ClientDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <Dialog open={adjustmentOpen} onOpenChange={setAdjustmentOpen}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Ajustar saldo de {client.name}</DialogTitle>
+          <DialogDescription>Usa cantidades positivas para aumentar la deuda y negativas para reducirla.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor={`credit-adjust-pieces-${clientId}`}>Piezas</Label>
+            <Input id={`credit-adjust-pieces-${clientId}`} type="number" step={1} value={adjustmentPieces} onChange={(e) => setAdjustmentPieces(e.target.value)} />
+          </div>
+          <div>
+            <Label htmlFor={`credit-adjust-amount-${clientId}`}>Dinero</Label>
+            <Input id={`credit-adjust-amount-${clientId}`} type="number" step="0.01" value={adjustmentAmount} onChange={(e) => setAdjustmentAmount(e.target.value)} />
+          </div>
+          <div className="col-span-2">
+            <Label htmlFor={`credit-adjust-note-${clientId}`}>Nota (opcional)</Label>
+            <Input id={`credit-adjust-note-${clientId}`} value={adjustmentNote} onChange={(e) => setAdjustmentNote(e.target.value)} placeholder="Saldo inicial, corrección..." />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setAdjustmentOpen(false)}>Cancelar</Button>
+          <Button
+            type="button"
+            onClick={() => {
+              actions.adjustClientCreditBalance(clientId, Number(adjustmentPieces) || 0, Number(adjustmentAmount) || 0, adjustmentNote);
+              setAdjustmentPieces("0"); setAdjustmentAmount("0"); setAdjustmentNote("");
+              setAdjustmentOpen(false);
+            }}
+          >
+            Guardar ajuste
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 

@@ -18,6 +18,7 @@ export type CreditMovement = {
   amount: number;
   /** Stable reference to the sale that originated this movement, when applicable. */
   saleRef?: string;
+  note?: string;
 };
 export type Client = { id: string; name: string; address?: string; lat?: number; lng?: number; placeId?: string; verifiedAddress?: string; routeId: string; visitOrder: number; active?: boolean; credit?: boolean; creditType?: CreditType; specialPricing?: SpecialPricing; enabledGroupIds?: string[] };
 export type Route = { id: string; name: string };
@@ -36,6 +37,8 @@ export type ClientSale = {
   priceSnapshot?: Record<string, number>;
   // Notas / incidentes del vendedor sobre esta venta.
   notes?: string;
+  // Cobro de deuda anterior para clientes tipo A; también se conserva en borradores.
+  previousCreditPayment?: { pieces: number; amount: number };
 };
 
 export type ActiveRoute = {
@@ -457,7 +460,63 @@ export const actions = {
   saveClientSale: (clientId: string, sale: ClientSale) =>
     setState((s) => {
       if (!s.active) return s;
-      return { ...s, active: { ...s.active, sales: { ...s.active.sales, [clientId]: sale } } };
+      const saleRef = `${s.active.routeId}:${s.active.date}:${clientId}`;
+      const creditLedger = s.creditLedger.filter((movement) => movement.saleRef !== saleRef);
+      const client = s.clients.find((c) => c.id === clientId);
+      if (client?.creditType === "A" && sale.completed) {
+        const movements: CreditMovement[] = [
+          {
+            id: uid(),
+            date: new Date().toISOString(),
+            type: "venta",
+            accountType: "client",
+            accountId: clientId,
+            pieces: clientNetUnits(sale),
+            amount: clientSaleAmount(sale, s.products),
+            saleRef,
+          },
+        ];
+        const payment = sale.previousCreditPayment;
+        if (payment && (payment.pieces !== 0 || payment.amount !== 0)) {
+          movements.push({
+            id: uid(),
+            date: new Date().toISOString(),
+            type: "cobro",
+            accountType: "client",
+            accountId: clientId,
+            pieces: -payment.pieces,
+            amount: -payment.amount,
+            saleRef,
+          });
+        }
+        creditLedger.push(...movements);
+      }
+      return {
+        ...s,
+        creditLedger,
+        active: { ...s.active, sales: { ...s.active.sales, [clientId]: sale } },
+      };
+    }),
+
+  adjustClientCreditBalance: (clientId: string, pieces: number, amount: number, note?: string) =>
+    setState((s) => {
+      if (pieces === 0 && amount === 0) return s;
+      return {
+        ...s,
+        creditLedger: [
+          ...s.creditLedger,
+          {
+            id: uid(),
+            date: new Date().toISOString(),
+            type: "ajuste",
+            accountType: "client",
+            accountId: clientId,
+            pieces,
+            amount,
+            ...(note?.trim() ? { note: note.trim() } : {}),
+          },
+        ],
+      };
     }),
 
   endRoute: () =>

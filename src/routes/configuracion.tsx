@@ -16,7 +16,7 @@ import { parseGpx } from "@/lib/gpx";
 import { VerifyAddressDialog, type VerifiedAddress } from "@/components/VerifyAddressDialog";
 import { Trash2, Plus, MapPin, Loader2, ExternalLink, Save, Download, Upload, Pencil, X, BarChart3, Search, CreditCard, ArrowUp, ArrowDown, Power, Tag, Layers, FileUp, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Client, Product, Route as AppRoute } from "@/lib/store";
+import type { Client, CreditType, Product, Route as AppRoute } from "@/lib/store";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/configuracion")({
@@ -744,6 +744,20 @@ function ClientEditForm({
             )}
           </div>
           <div className="flex flex-wrap gap-2">
+            <div className="min-w-44">
+              <Label className="text-[10px] uppercase text-muted-foreground">Tipo de crédito</Label>
+              <Select
+                value={client.creditType ?? "ninguno"}
+                onValueChange={(value: CreditType) => actions.updateClient(client.id, { creditType: value })}
+              >
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ninguno">Ninguno</SelectItem>
+                  <SelectItem value="A">A · Por visita</SelectItem>
+                  <SelectItem value="B">B · Cadena</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               size="sm"
               variant={client.credit ? "default" : "outline"}
