@@ -14,6 +14,12 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.io.FileWriter;
 import java.util.concurrent.TimeUnit;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.os.Build;
+import android.provider.MediaStore;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 @CapacitorPlugin(name = "BackupScheduler")
 public class BackupSchedulerPlugin extends Plugin {
@@ -152,6 +158,67 @@ public class BackupSchedulerPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Error saving file: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void saveToDownloads(PluginCall call) {
+        String data = call.getString("data");
+        String filename = call.getString("filename");
+        if (data == null || data.isEmpty()) {
+            call.reject("No backup data provided");
+            return;
+        }
+        if (filename == null || filename.trim().isEmpty()) {
+            call.reject("No filename provided");
+            return;
+        }
+
+        Uri uri = null;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, filename);
+                values.put(MediaStore.Downloads.MIME_TYPE, "application/json");
+                values.put(MediaStore.Downloads.RELATIVE_PATH, "Download/SalsaRuta");
+                values.put(MediaStore.Downloads.IS_PENDING, 1);
+                uri = getContext().getContentResolver().insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                );
+                if (uri == null) throw new IllegalStateException("No se pudo crear el archivo en Descargas");
+                try (OutputStream out = getContext().getContentResolver().openOutputStream(uri)) {
+                    if (out == null) throw new IllegalStateException("No se pudo abrir el archivo de respaldo");
+                    out.write(data.getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
+                ContentValues ready = new ContentValues();
+                ready.put(MediaStore.Downloads.IS_PENDING, 0);
+                getContext().getContentResolver().update(uri, ready, null, null);
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("path", "Descargas/SalsaRuta/" + filename);
+                call.resolve(ret);
+            } else {
+                File downloads = android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                );
+                File folder = new File(downloads, "SalsaRuta");
+                if (!folder.exists() && !folder.mkdirs()) throw new IllegalStateException("No se pudo crear la carpeta de respaldo");
+                File outFile = new File(folder, filename);
+                try (FileWriter writer = new FileWriter(outFile)) {
+                    writer.write(data);
+                    writer.flush();
+                }
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("path", outFile.getAbsolutePath());
+                call.resolve(ret);
+            }
+        } catch (Exception e) {
+            if (uri != null) {
+                try { getContext().getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            }
+            call.reject("No se pudo guardar el respaldo en Descargas: " + e.getMessage());
         }
     }
 

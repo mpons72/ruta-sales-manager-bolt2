@@ -7,6 +7,7 @@ export interface BackupSchedulerPlugin {
   setCustomBackupPath(options: { path: string }): Promise<{ success: boolean; path: string }>;
   getCustomBackupPath(): Promise<{ success: boolean; path: string | null }>;
   saveFile(options: { data: string; filename: string }): Promise<{ success: boolean; path?: string }>;
+  saveToDownloads(options: { data: string; filename: string }): Promise<{ success: boolean; path?: string }>;
   checkBatteryOptimization(): Promise<{ success: boolean; exempt: boolean }>;
   openBatteryOptimizationSettings(): Promise<{ success: boolean }>;
   openMiuiAutostartSettings(): Promise<{ success: boolean }>;

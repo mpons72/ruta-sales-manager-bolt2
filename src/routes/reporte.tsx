@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   clientSaleAmount,
   computeRemaining,
+  getRouteCashCreditSummary,
   priceFor,
   productsForClients,
   useStore,
@@ -35,6 +36,9 @@ function ReportePage() {
   const allProducts = useStore((s) => s.products);
   const groups = useStore((s) => s.groups);
   const clients = useStore((s) => s.clients);
+  const clientNameSnapshots = useStore((s) => s.clientNameSnapshots);
+  const clientCreditSnapshots = useStore((s) => s.clientCreditSnapshots);
+  const creditLedger = useStore((s) => s.creditLedger);
   const routes = useStore((s) => s.routes);
   const search = Route.useSearch();
 
@@ -125,20 +129,20 @@ function ReportePage() {
                 ))}
               </select>
             )}
-            <Button variant="outline" size="sm" onClick={() => exportReportCSV(target, products, clients, routes)}>
+            <Button variant="outline" size="sm" onClick={() => exportReportCSV(target, products, clients, routes, creditLedger, clientNameSnapshots, clientCreditSnapshots)}>
               <FileDown className="mr-1.5 h-4 w-4" /> CSV
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportReportPDF(target, products, clients, routes)}>
+            <Button variant="outline" size="sm" onClick={() => exportReportPDF(target, products, clients, routes, creditLedger, clientNameSnapshots, clientCreditSnapshots)}>
               <FileText className="mr-1.5 h-4 w-4" /> PDF
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportReportJSON(target, products, clients, routes)}>
+            <Button variant="outline" size="sm" onClick={() => exportReportJSON(target, products, clients, routes, creditLedger, clientNameSnapshots, clientCreditSnapshots)}>
               <Share2 className="mr-1.5 h-4 w-4" /> JSON
             </Button>
           </div>
         </div>
 
 
-        <ReportBody target={target} products={products} clients={clients} history={history} />
+        <ReportBody target={target} products={products} clients={clients} history={history} creditLedger={creditLedger} clientNameSnapshots={clientNameSnapshots} clientCreditSnapshots={clientCreditSnapshots} />
       </main>
     </div>
   );
@@ -149,52 +153,55 @@ function ReportBody({
   products,
   clients,
   history,
+  creditLedger,
+  clientNameSnapshots,
+  clientCreditSnapshots,
 }: {
   target: ActiveRoute & { endedAt?: string };
   products: Product[];
   clients: any;
   history: (ActiveRoute & { endedAt: string })[];
+  creditLedger: import("@/lib/store").CreditMovement[];
+  clientNameSnapshots: Record<string, string>;
+  clientCreditSnapshots: Record<string, import("@/lib/store").DeletedClientCreditSnapshot>;
 }) {
   const remaining = useMemo(() => computeRemaining(target, products), [target, products]);
 
   const summary = useMemo(() => {
     let totalDinero = 0;
-    let totalEfectivo = 0;
-    let totalCredito = 0;
     let totalUnidades = 0;
     let clientesAtendidos = 0;
-    const porProducto: Record<string, { surtido: number; devolucion: number; venta: number; dinero: number }> = {};
-    for (const p of products) porProducto[p.id] = { surtido: 0, devolucion: 0, venta: 0, dinero: 0 };
+    const porProducto: Record<string, { surtido: number; obsequios: number; devolucion: number; venta: number; dinero: number }> = {};
+    for (const p of products) porProducto[p.id] = { surtido: 0, obsequios: 0, devolucion: 0, venta: 0, dinero: 0 };
 
-    const clientById = new Map(
-      (clients as { id: string; credit?: boolean }[]).map((c) => [c.id, c]),
-    );
-
-    for (const [cid, sale] of Object.entries(target.sales ?? {})) {
+    for (const sale of Object.values(target.sales ?? {})) {
       if (sale?.completed) clientesAtendidos++;
       const surtido = sale?.surtido ?? {};
+      const obsequios = sale?.obsequios ?? {};
       const devolucion = sale?.devolucion ?? {};
       for (const p of products) {
         const s = surtido[p.id] ?? 0;
+        const gift = obsequios[p.id] ?? 0;
         const d = devolucion[p.id] ?? 0;
         porProducto[p.id].surtido += s;
+        porProducto[p.id].obsequios += gift;
         porProducto[p.id].devolucion += d;
-        porProducto[p.id].venta += s - d;
-        porProducto[p.id].dinero += s * priceFor(sale, p);
+        porProducto[p.id].venta += s - gift - d;
+        porProducto[p.id].dinero += Math.max(0, s - gift) * priceFor(sale, p);
       }
       const amt = clientSaleAmount(sale, products);
       totalDinero += amt;
-      const isCredit = sale?.paymentType === "credit" || clientById.get(cid)?.credit;
-      if (isCredit) totalCredito += amt;
-      else totalEfectivo += amt;
     }
+    const { collected: totalEfectivo, creditPlaced: totalCredito } = getRouteCashCreditSummary(
+      target, clients as Client[], products, creditLedger, false, clientCreditSnapshots,
+    );
     for (const v of Object.values(porProducto)) totalUnidades += v.venta;
     return { totalDinero, totalEfectivo, totalCredito, totalUnidades, clientesAtendidos, porProducto };
-  }, [target, products, clients]);
+  }, [target, products, clients, creditLedger, clientCreditSnapshots]);
 
   const allClientsTyped = clients as { id: string; name: string; visitOrder: number; routeId: string }[];
   const tempIds = (target as ActiveRoute).clientIds;
-  const clientList = tempIds && tempIds.length > 0
+  const visibleClientList = tempIds && tempIds.length > 0
     ? tempIds
         .map((id, i) => {
           const c = allClientsTyped.find((x) => x.id === id);
@@ -204,13 +211,23 @@ function ReportBody({
     : allClientsTyped
         .filter((c) => c.routeId === target.routeId)
         .sort((a, b) => a.visitOrder - b.visitOrder);
+  const listedIds = new Set(visibleClientList.map((client) => client.id));
+  const deletedSaleClients = Object.keys(target.sales ?? {})
+    .filter((id) => !listedIds.has(id) && !!clientNameSnapshots[id])
+    .map((id, index) => ({
+      id,
+      name: clientNameSnapshots[id],
+      visitOrder: visibleClientList.length + index + 1,
+      routeId: target.routeId,
+    }));
+  const clientList = [...visibleClientList, ...deletedSaleClients];
 
   return (
     <>
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat icon={DollarSign} label="Total efectivo" value={`$${summary.totalEfectivo.toFixed(2)}`} highlight />
-        <Stat icon={DollarSign} label="Total crédito" value={`$${summary.totalCredito.toFixed(2)}`} />
-        <Stat icon={TrendingUp} label="Total general" value={`$${summary.totalDinero.toFixed(2)}`} />
+        <Stat icon={DollarSign} label="Dinero cobrado" value={`$${summary.totalEfectivo.toFixed(2)}`} highlight />
+        <Stat icon={DollarSign} label="Producto a crédito" value={`$${summary.totalCredito.toFixed(2)}`} />
+        <Stat icon={TrendingUp} label="Producto colocado" value={`$${summary.totalDinero.toFixed(2)}`} />
         <Stat icon={Users} label="Clientes atendidos" value={`${summary.clientesAtendidos} / ${clientList.length}`} />
       </div>
 
@@ -224,6 +241,7 @@ function ReportBody({
                   <th className="py-2 px-2 text-left">Producto</th>
                   <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Inicial</th>
                   <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Surt.</th>
+                  <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Obseq.</th>
                   <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Dev.</th>
                   <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">Resta</th>
                   <th className="py-2 px-2 text-right tabular-nums text-[10px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">$</th>
@@ -237,6 +255,7 @@ function ReportBody({
                       <td className="py-2 px-2 font-semibold whitespace-nowrap">{p.name}</td>
                       <td className="py-2 px-2 text-right tabular-nums text-sm whitespace-nowrap">{target.initialInventory?.[p.id] ?? 0}</td>
                       <td className="py-2 px-2 text-right tabular-nums text-sm font-semibold whitespace-nowrap">{v.surtido}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-sm whitespace-nowrap">{v.obsequios}</td>
                       <td className={`py-2 px-2 text-right tabular-nums text-sm whitespace-nowrap ${v.devolucion > 0 ? "text-orange-500" : ""}`}>{v.devolucion}</td>
                       <td className={`py-2 px-2 text-right tabular-nums text-sm font-bold whitespace-nowrap ${remaining[p.id] < 0 ? "text-destructive" : ""}`}>
                         {remaining[p.id]}
@@ -317,7 +336,7 @@ function ClientSalesList({
         const units = sale
           ? products.reduce(
               (acc, p) =>
-                acc + ((sale.surtido?.[p.id] ?? 0) - (sale.devolucion?.[p.id] ?? 0)),
+                acc + ((sale.surtido?.[p.id] ?? 0) - (sale.obsequios?.[p.id] ?? 0) - (sale.devolucion?.[p.id] ?? 0)),
               0,
             )
           : 0;
@@ -377,6 +396,7 @@ function ClientSalesList({
                       <th className="py-1 pr-2">Sabor</th>
                       <th className="py-1 px-2 text-right tabular-nums text-[11px] uppercase tracking-wider text-muted-foreground">Antes</th>
                       <th className="py-1 px-2 text-right">Surtido</th>
+                      <th className="py-1 px-2 text-right">Obseq.</th>
                       <th className="py-1 px-2 text-right">Dev.</th>
                       <th className="py-1 px-2 text-right">Vendido</th>
                       <th className="py-1 pl-2 text-right">$</th>
@@ -385,15 +405,17 @@ function ClientSalesList({
                   <tbody>
                     {products.map((p) => {
                       const s = sale?.surtido?.[p.id] ?? 0;
+                      const gift = sale?.obsequios?.[p.id] ?? 0;
                       const d = sale?.devolucion?.[p.id] ?? 0;
                       const a = sale?.existenciaAnterior?.[p.id] ?? 0;
-                      const v = s - d;
+                      const v = s - gift - d;
                       if (s === 0 && d === 0 && a === 0) return null;
                       return (
                         <tr key={p.id} className="border-t border-border/40">
                           <td className="py-1.5 pr-2 font-medium">{p.name}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{a}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{s}</td>
+                          <td className="py-1.5 px-2 text-right tabular-nums">{gift}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{d}</td>
                           <td className="py-1.5 px-2 text-right font-semibold tabular-nums">{v}</td>
                           <td className="py-1.5 pl-2 text-right tabular-nums text-primary">
@@ -404,7 +426,7 @@ function ClientSalesList({
                     })}
                     {products.every((p) => !(sale?.surtido?.[p.id] || sale?.devolucion?.[p.id] || sale?.existenciaAnterior?.[p.id])) && (
                       <tr>
-                        <td colSpan={6} className="py-2 text-center text-xs text-muted-foreground">
+                        <td colSpan={7} className="py-2 text-center text-xs text-muted-foreground">
                           Sin movimientos por sabor.
                         </td>
                       </tr>

@@ -30,9 +30,9 @@ export function CargaInicialDialog({
     if (!active) return [];
     if (active.clientIds && active.clientIds.length > 0) {
       const set = new Set(active.clientIds);
-      return allClients.filter((c) => set.has(c.id));
+      return allClients.filter((c) => !c.archivedAt && set.has(c.id));
     }
-    return allClients.filter((c) => c.routeId === active.routeId && c.active !== false);
+    return allClients.filter((c) => !c.archivedAt && c.routeId === active.routeId && c.active !== false);
   }, [allClients, active]);
 
   const products = useMemo(

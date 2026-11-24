@@ -51,11 +51,11 @@ function Home() {
 
   const stats = useMemo(() => {
     if (!active) {
-      const totalClients = clients.filter((c) => c.active !== false).length;
+      const totalClients = clients.filter((c) => !c.archivedAt && c.active !== false).length;
       return { cash: 0, credit: 0, visited: 0, total: totalClients };
     }
     const routeClients = clients.filter(
-      (c) => c.routeId === active.routeId && c.active !== false,
+      (c) => !c.archivedAt && c.routeId === active.routeId && c.active !== false,
     );
     let cash = 0;
     let credit = 0;
@@ -152,7 +152,7 @@ function Home() {
             to="/clientes"
             icon={Users}
             title="Clientes"
-            subtitle={`${clients.filter((c) => c.active !== false).length} activos`}
+            subtitle={`${clients.filter((c) => !c.archivedAt && c.active !== false).length} activos`}
           />
           <QuickLink
             to="/productos"

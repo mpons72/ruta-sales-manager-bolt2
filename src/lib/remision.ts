@@ -2,11 +2,12 @@ import { priceFor, type ClientSale, type Product, type Client } from "@/lib/stor
 import { getBusinessConfig } from "@/lib/business-config";
 
 export type RemisionData = {
-  client: Pick<Client, "name" | "address">;
+  client: Pick<Client, "name" | "address"> & { creditType?: Client["creditType"] };
   sale: ClientSale;
   products: Product[];
   date: string; // ISO
   folio?: string;
+  creditBalance?: { pieces: number; amount: number };
 };
 
 function escapeHtml(s: string): string {
@@ -20,29 +21,36 @@ function escapeHtml(s: string): string {
 function computeTotals(data: RemisionData) {
   const lines: { name: string; qty: number; price: number; total: number; antes: number }[] = [];
   let totalPzas = 0;
+  let totalObsequios = 0;
   let totalDev = 0;
   let subtotal = 0;
   
   if (!data.products || data.products.length === 0) {
-    return { lines, totalPzas, totalDev, subtotal, descDev: 0, total: 0 };
+    return { lines, totalPzas, totalObsequios, totalDev, subtotal, descDev: 0, total: 0 };
   }
   
   for (const p of data.products) {
     const surt = data.sale.surtido?.[p.id] ?? 0;
+    const obsequio = Math.min(surt, data.sale.obsequios?.[p.id] ?? 0);
+    const vendible = surt - obsequio;
     const dev = data.sale.devolucion?.[p.id] ?? 0;
     const antes = data.sale.existenciaAnterior?.[p.id] ?? 0;
     const price = priceFor(data.sale, p);
-    if (surt > 0) {
-      lines.push({ name: p.name, qty: surt, price, total: surt * price, antes });
-      totalPzas += surt;
-      subtotal += surt * price;
+    if (vendible > 0) {
+      lines.push({ name: p.name, qty: vendible, price, total: vendible * price, antes });
+      totalPzas += vendible;
+      subtotal += vendible * price;
+    }
+    if (obsequio > 0) {
+      lines.push({ name: `${p.name} (obsequio)`, qty: obsequio, price: 0, total: 0, antes });
+      totalObsequios += obsequio;
     }
     totalDev += dev;
   }
   const precioProm = totalPzas > 0 ? subtotal / totalPzas : 0;
   const descDev = totalDev * precioProm;
   const total = subtotal - descDev;
-  return { lines, totalPzas, totalDev, subtotal, descDev, total };
+  return { lines, totalPzas, totalObsequios, totalDev, subtotal, descDev, total };
 }
 
 function buildStyle(cfg: ReturnType<typeof getBusinessConfig>): string {
@@ -89,7 +97,7 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
   }
 
   const cfg = getBusinessConfig();
-  const { lines, totalPzas, totalDev, subtotal, descDev, total } = computeTotals(data);
+  const { lines, totalPzas, totalObsequios, totalDev, subtotal, descDev, total } = computeTotals(data);
   const date = new Date(data.date);
   const folio = data.folio ?? date.getTime().toString(36).toUpperCase().slice(-6);
   const paymentLabel = data.sale.paymentType === "credit" ? "CRÉDITO" : "CONTADO";
@@ -121,6 +129,9 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
       <td class="col-total">$${l.total.toFixed(2)}</td>
     </tr>
   `).join('');
+  const creditBalanceHtml = data.client.creditType === "A" && data.creditBalance
+    ? `<div class="divider"></div><div class="bold">Saldo pendiente: ${data.creditBalance.pieces} pzas · $${data.creditBalance.amount.toFixed(2)}</div>`
+    : "";
 
   return `${buildStyle(cfg)}
 <div class="receipt">
@@ -148,7 +159,7 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
     </tbody>
   </table>
   <div class="divider"></div>
-  <div>Piezas surtidas: ${totalPzas}</div>
+  <div>Piezas surtidas: ${totalPzas + totalObsequios}${totalObsequios ? ` (incluye ${totalObsequios} de obsequio)` : ""}</div>
   ${totalDev > 0 ? `
   <div class="totals-row"><span>Subtotal bruto:</span><span>$${subtotal.toFixed(2)}</span></div>
   <div class="totals-row"><span>Devoluciones (${totalDev} pzas):</span><span>-$${descDev.toFixed(2)}</span></div>
@@ -157,6 +168,7 @@ export function buildReceiptInnerHtml(data: RemisionData): string {
   `}
   <div class="divider"></div>
   <div class="totals-row bold"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>
+  ${creditBalanceHtml}
   <div class="divider"></div>
   <div class="center">${escapeHtml(cfg.footerText || '¡Gracias por su compra!')}</div>
 </div>`;

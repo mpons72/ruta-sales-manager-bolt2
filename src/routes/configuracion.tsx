@@ -7,14 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { backupFilename } from "@/lib/backup";
 import { saveAndShareFile } from "@/lib/nativeIO";
-import { actions, useStore, productsForClient, type SpecialPricing, type ProductGroup } from "@/lib/store";
+import { actions, getChainBranchBalances, getCreditBalance, getCreditInvoiceBalance, getInvoiceBranchBalances, useStore, productsForClient, type CreditInvoice, type SpecialPricing, type ProductGroup, type ProspectResult } from "@/lib/store";
 import { captureLocation, mapsUrl, openMapChooser } from "@/lib/geo";
 import { getAskEachTime } from "@/lib/nav-provider";
 import { parseGpx } from "@/lib/gpx";
 import { VerifyAddressDialog, type VerifiedAddress } from "@/components/VerifyAddressDialog";
-import { Trash2, Plus, MapPin, Loader2, ExternalLink, Save, Download, Upload, Pencil, X, BarChart3, Search, CreditCard, ArrowUp, ArrowDown, Power, Tag, Layers, FileUp, ShieldCheck } from "lucide-react";
+import { ArchivedClientsTab, ProspectsTab } from "@/components/ClientArchiveAndProspects";
+import { Trash2, Plus, MapPin, Loader2, ExternalLink, Save, Download, Upload, Pencil, X, BarChart3, Search, CreditCard, ArrowUp, ArrowDown, Power, Tag, Layers, FileUp, ShieldCheck, Archive, RotateCcw, History } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Client, CreditType, Product, Route as AppRoute } from "@/lib/store";
 import { toast } from "sonner";
@@ -57,6 +59,220 @@ function ConfigPage() {
         </Tabs>
       </main>
     </div>
+  );
+}
+
+function ChainsTab() {
+  const chains = useStore((s) => s.chains);
+  const clients = useStore((s) => s.clients);
+  const clientNameSnapshots = useStore((s) => s.clientNameSnapshots);
+  const ledger = useStore((s) => s.creditLedger);
+  const invoices = useStore((s) => s.creditInvoices);
+  const [newName, setNewName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedChainId && !chains.some((chain) => chain.id === selectedChainId)) setSelectedChainId(null);
+  }, [chains, selectedChainId]);
+
+  return (
+    <Card className="space-y-4 p-4">
+      <div>
+        <h2 className="font-semibold">Cadenas y matrices</h2>
+        <p className="text-xs text-muted-foreground">Crea aquí cada matriz, asigna sus sucursales desde la edición del cliente (tipo de crédito B) y abre el detalle para revisar saldos, sucursales y facturas.</p>
+      </div>
+      <div className="flex gap-2">
+        <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nombre de la matriz o cadena" />
+        <Button
+          disabled={!newName.trim()}
+          onClick={() => { actions.addCreditChain(newName); setNewName(""); toast.success("Cadena agregada"); }}
+        >
+          <Plus className="mr-2 h-4 w-4" /> Agregar
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {chains.map((chain) => {
+          const branches = clients.filter((client) => client.creditType === "B" && client.chainId === chain.id);
+          const balance = getCreditBalance(ledger, "chain", chain.id);
+          const hasCreditHistory = ledger.some((movement) => movement.accountType === "chain" && movement.accountId === chain.id) || invoices.some((invoice) => invoice.chainId === chain.id);
+          const editing = editingId === chain.id;
+          return (
+            <div key={chain.id} className="rounded-lg border bg-card p-3">
+              <div className="flex items-center gap-2">
+                {editing ? (
+                  <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
+                ) : (
+                  <div className="min-w-0 flex-1 font-medium">{chain.name}</div>
+                )}
+                <Button size="sm" variant={selectedChainId === chain.id ? "default" : "outline"} onClick={() => setSelectedChainId(selectedChainId === chain.id ? null : chain.id)}>
+                  {selectedChainId === chain.id ? "Ocultar detalle" : "Saldo y factura"}
+                </Button>
+                {editing ? (
+                  <>
+                    <Button size="sm" onClick={() => {
+                      if (!editingName.trim()) return;
+                      actions.updateCreditChain(chain.id, editingName);
+                      setEditingId(null); toast.success("Cadena actualizada");
+                    }}>Guardar</Button>
+                    <Button size="icon" variant="ghost" onClick={() => setEditingId(null)} title="Cancelar"><X className="h-4 w-4" /></Button>
+                  </>
+                ) : (
+                  <Button size="icon" variant="ghost" onClick={() => { setEditingId(chain.id); setEditingName(chain.name); }} title="Editar cadena"><Pencil className="h-4 w-4" /></Button>
+                )}
+                <Button
+                  size="icon" variant="ghost" title={hasCreditHistory ? "No se puede borrar una cadena con movimientos o facturas" : "Borrar cadena"} disabled={hasCreditHistory}
+                  onClick={() => {
+                    if (!confirm(`¿Borrar "${chain.name}"? Las sucursales quedarán sin cadena y los movimientos históricos se conservarán.`)) return;
+                    actions.removeCreditChain(chain.id);
+                    toast.success("Cadena eliminada");
+                  }}
+                ><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {branches.length ? `Sucursales: ${branches.map((client) => client.name).join(", ")}` : "Sin sucursales asignadas. En Clientes, edita una sucursal, elige crédito B y vincúlala aquí."}
+              </p>
+              <p className="mt-2 text-xs font-semibold tabular-nums">Pendiente por facturar: {balance.pieces} pzas · ${balance.amount.toFixed(2)}</p>
+            </div>
+          );
+        })}
+        {chains.length === 0 && <p className="text-sm text-muted-foreground">Todavía no hay cadenas.</p>}
+      </div>
+      {selectedChainId && chains.some((chain) => chain.id === selectedChainId) && (
+        <ChainCreditDetails chainId={selectedChainId} />
+      )}
+    </Card>
+  );
+}
+
+function ChainCreditDetails({ chainId }: { chainId: string }) {
+  const chain = useStore((s) => s.chains.find((item) => item.id === chainId));
+  const clients = useStore((s) => s.clients);
+  const clientNameSnapshots = useStore((s) => s.clientNameSnapshots);
+  const ledger = useStore((s) => s.creditLedger);
+  const allInvoices = useStore((s) => s.creditInvoices);
+  const invoices = useMemo(
+    () => allInvoices.filter((invoice) => invoice.chainId === chainId).sort((a, b) => b.date.localeCompare(a.date)),
+    [allInvoices, chainId],
+  );
+  const balance = getCreditBalance(ledger, "chain", chainId);
+  const branchBalances = getChainBranchBalances(chainId, ledger, clients, clientNameSnapshots);
+  const openInvoice = invoices.find((invoice) => {
+    const due = getCreditInvoiceBalance(invoice, ledger);
+    return due.pieces > 0 || due.amount > 0;
+  });
+  const openInvoiceDue = openInvoice ? getCreditInvoiceBalance(openInvoice, ledger) : null;
+  const [folio, setFolio] = useState("");
+  const [adjustPieces, setAdjustPieces] = useState("0");
+  const [adjustAmount, setAdjustAmount] = useState("0");
+  const [adjustNote, setAdjustNote] = useState("");
+  const [paymentPieces, setPaymentPieces] = useState("0");
+  const [paymentAmount, setPaymentAmount] = useState("0");
+
+  useEffect(() => {
+    setPaymentPieces(String(openInvoiceDue?.pieces ?? 0));
+    setPaymentAmount(String(openInvoiceDue?.amount ?? 0));
+  }, [openInvoice?.id, openInvoiceDue?.pieces, openInvoiceDue?.amount]);
+
+  if (!chain) return null;
+  const money = (value: number) => `$${value.toFixed(2)}`;
+
+  return (
+    <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+      <div>
+        <h3 className="text-lg font-semibold">Saldo de {chain.name}</h3>
+        <div className="mt-1 flex flex-wrap gap-4 text-sm font-bold tabular-nums">
+          <span>{balance.pieces} piezas pendientes</span><span>{money(balance.amount)} pendientes</span>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold">Desglose actual por sucursal</h4>
+        {branchBalances.map((branch, index) => (
+          <div key={`${branch.branchId ?? "adjustment"}-${index}`} className="flex justify-between gap-2 rounded bg-background/60 px-3 py-2 text-xs">
+            <span>{branch.name}</span><span className="tabular-nums">{branch.pieces} pzas · {money(branch.amount)}</span>
+          </div>
+        ))}
+        {branchBalances.length === 0 && <p className="text-xs text-muted-foreground">Sin saldo pendiente.</p>}
+      </div>
+
+      <div className="space-y-2 rounded-lg border bg-background/50 p-3">
+        <h4 className="text-sm font-semibold">Saldo inicial o ajuste manual</h4>
+        <p className="text-[11px] text-muted-foreground">Usa valores positivos para aumentar el saldo y negativos para reducirlo.</p>
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label>Piezas</Label><Input type="number" step={1} value={adjustPieces} onChange={(e) => setAdjustPieces(e.target.value)} /></div>
+          <div><Label>Dinero</Label><Input type="number" step="0.01" value={adjustAmount} onChange={(e) => setAdjustAmount(e.target.value)} /></div>
+          <div className="col-span-2"><Label>Nota (opcional)</Label><Input value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="Saldo anterior a la app..." /></div>
+        </div>
+        <Button size="sm" disabled={(Number(adjustPieces) || 0) === 0 && (Number(adjustAmount) || 0) === 0} onClick={() => {
+          actions.adjustChainCreditBalance(chainId, Number(adjustPieces) || 0, Number(adjustAmount) || 0, adjustNote);
+          setAdjustPieces("0"); setAdjustAmount("0"); setAdjustNote(""); toast.success("Saldo ajustado");
+        }}>Guardar ajuste</Button>
+      </div>
+
+      <div className="space-y-2 rounded-lg border bg-background/50 p-3">
+        <h4 className="text-sm font-semibold">Facturación</h4>
+        {openInvoice ? (
+          <div className="space-y-2">
+            <p className="text-xs">Factura abierta <strong>{openInvoice.folio}</strong> · pendiente {openInvoiceDue?.pieces ?? 0} pzas · {money(openInvoiceDue?.amount ?? 0)}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Piezas del pago</Label><Input type="number" min={0} max={openInvoiceDue?.pieces} step={1} value={paymentPieces} onChange={(e) => setPaymentPieces(e.target.value)} /></div>
+              <div><Label>Dinero del pago</Label><Input type="number" min={0} max={openInvoiceDue?.amount} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
+            </div>
+            <Button size="sm" disabled={(Number(paymentPieces) || 0) === 0 && (Number(paymentAmount) || 0) === 0} onClick={() => {
+              actions.registerChainPayment(openInvoice.id, Number(paymentPieces) || 0, Number(paymentAmount) || 0);
+              toast.success("Pago registrado");
+            }}>Registrar pago</Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              actions.registerChainPayment(openInvoice.id, openInvoiceDue?.pieces ?? 0, openInvoiceDue?.amount ?? 0);
+              toast.success(`Factura ${openInvoice.folio} saldada`);
+            }}>Saldar factura completa</Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-48 flex-1"><Label>Folio</Label><Input value={folio} onChange={(e) => setFolio(e.target.value)} placeholder="Se genera automáticamente si se deja vacío" /></div>
+            <Button disabled={balance.pieces <= 0 && balance.amount <= 0} onClick={() => {
+              const invoice = actions.createChainInvoice(chainId, folio);
+              if (!invoice) { toast.error("No se pudo generar la factura. Revisa que haya saldo pendiente."); return; }
+              setFolio(""); toast.success(`Factura ${invoice.folio} generada`);
+            }}>Generar factura</Button>
+          </div>
+        )}
+        {invoices.map((invoice) => (
+          <InvoiceSummary key={invoice.id} invoice={invoice} ledger={ledger} />
+        ))}
+      </div>
+
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold">Movimientos</h4>
+        {ledger.filter((movement) => movement.accountType === "chain" && movement.accountId === chainId).slice().reverse().map((movement) => {
+          const branchName = clients.find((client) => client.id === movement.branchId)?.name;
+          const typeLabel = movement.type === "venta" ? "Producto colocado" : movement.type === "ajuste" ? "Ajuste" : movement.type === "factura" ? "Factura" : movement.type === "pago" ? "Pago" : "Cobro";
+          return (
+            <div key={movement.id} className="grid grid-cols-[1fr_auto] gap-2 rounded bg-background/60 px-3 py-2 text-xs">
+              <span>{new Date(movement.date).toLocaleDateString("es-MX")} · {typeLabel}{branchName ? ` · ${branchName}` : ""}{movement.note ? ` · ${movement.note}` : ""}</span>
+              <span className="text-right tabular-nums">{movement.pieces} pzas · {money(movement.amount)}</span>
+            </div>
+          );
+        })}
+        {!ledger.some((movement) => movement.accountType === "chain" && movement.accountId === chainId) && <p className="text-xs text-muted-foreground">Sin movimientos.</p>}
+      </div>
+    </div>
+  );
+}
+
+function InvoiceSummary({ invoice, ledger }: { invoice: CreditInvoice; ledger: import("@/lib/store").CreditMovement[] }) {
+  const due = getCreditInvoiceBalance(invoice, ledger);
+  const settled = due.pieces <= 0 && due.amount <= 0;
+  return (
+    <details className="rounded border bg-background/70 p-2 text-xs">
+      <summary className="cursor-pointer font-medium">Factura {invoice.folio} · {new Date(invoice.date).toLocaleDateString("es-MX")} · {settled ? "Saldada" : "Pendiente"}: {due.pieces} pzas · ${due.amount.toFixed(2)}</summary>
+      <div className="mt-2 space-y-1">
+        <div>Al generar: {invoice.pieces} piezas · ${invoice.amount.toFixed(2)}</div>
+        {invoice.branchBreakdown.map((branch, index) => <div key={`${branch.branchId ?? "adjustment"}-${index}`} className="text-muted-foreground">{branch.name}: {branch.pieces} pzas · ${branch.amount.toFixed(2)}</div>)}
+      </div>
+    </details>
   );
 }
 
@@ -234,17 +450,39 @@ export function RoutesTab() {
 }
 
 export function ClientsTab() {
+  return (
+    <Tabs defaultValue="lista-clientes">
+      <TabsList className="mb-3 flex h-auto flex-wrap">
+        <TabsTrigger value="lista-clientes">Clientes</TabsTrigger>
+        <TabsTrigger value="cadenas-matrices">Cadenas o matrices</TabsTrigger>
+        <TabsTrigger value="archivados">Archivados</TabsTrigger>
+        <TabsTrigger value="prospectos">Prospectos</TabsTrigger>
+      </TabsList>
+      <TabsContent value="lista-clientes"><ClientRegistryTab /></TabsContent>
+      <TabsContent value="cadenas-matrices"><ChainsTab /></TabsContent>
+      <TabsContent value="archivados"><ArchivedClientsTab /></TabsContent>
+      <TabsContent value="prospectos"><ProspectsTab /></TabsContent>
+    </Tabs>
+  );
+}
+
+function ClientRegistryTab() {
   const products = useStore((s) => s.products);
   const routes = useStore((s) => s.routes);
   const clients = useStore((s) => s.clients);
+  const active = useStore((s) => s.active);
+  const prospects = useStore((s) => s.prospects);
+  const clientNameSnapshots = useStore((s) => s.clientNameSnapshots);
   const groups = useStore((s) => s.groups);
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [placeId, setPlaceId] = useState<string | null>(null);
   const [verifyOpen, setVerifyOpen] = useState(false);
-  const [routeId, setRouteId] = useState(routes[0]?.id ?? "");
+  const [routeId, setRouteId] = useState(() => routes.find((route) => route.id === active?.routeId)?.id ?? routes[0]?.id ?? "");
   const [order, setOrder] = useState("");
+  const [orderPromptOpen, setOrderPromptOpen] = useState(false);
+  const [manualActivePosition, setManualActivePosition] = useState("");
   // Al agregar un cliente nuevo, habilita Bolsa 290 gms. La botella
   // salsera 200 ml y Bolsa 200 gms quedan deshabilitadas hasta activarlas.
   const pickDefaultGroups = (gs: { id: string; name: string }[]) => {
@@ -272,11 +510,62 @@ export function ClientsTab() {
   const [capturingId, setCapturingId] = useState<string | null>(null);
   const [filterRouteId, setFilterRouteId] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [focusClientId, setFocusClientId] = useState<string | null>(null);
+  useEffect(() => {
+    const requestedId = localStorage.getItem("clientes:focus-client");
+    if (!requestedId) return;
+    localStorage.removeItem("clientes:focus-client");
+    const target = clients.find((client) => client.id === requestedId && !client.archivedAt);
+    if (!target) return;
+    setFocusClientId(target.id);
+    setFilterRouteId(target.routeId);
+    setSearch(target.name);
+  }, [clients]);
   const q = search.trim().toLowerCase();
+  const normalized = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+  const distanceMeters = (a: { lat?: number; lng?: number }, b: { lat?: number; lng?: number }) => {
+    if (a.lat == null || a.lng == null || b.lat == null || b.lng == null) return Infinity;
+    const rad = (value: number) => value * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat); const dLng = rad(b.lng - a.lng);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  };
+  const comparison = { name: normalized(name), address: normalized(address), lat: coords?.lat, lng: coords?.lng };
+  const archiveMatches = clients.filter((client) => client.archivedAt && (
+    (comparison.name.length >= 3 && normalized(client.name) === comparison.name) ||
+    (comparison.address.length >= 6 && normalized(client.address ?? "") === comparison.address) ||
+    distanceMeters(comparison, client) <= 100
+  ));
+  const prospectMatches = prospects.filter((prospect) => !prospect.convertedClientId && (
+    (comparison.name.length >= 3 && normalized(prospect.name) === comparison.name) ||
+    (comparison.address.length >= 6 && normalized(prospect.address ?? "") === comparison.address) ||
+    distanceMeters(comparison, prospect) <= 100
+  ));
+  const deletedNameMatch = Object.entries(clientNameSnapshots).find(([id, savedName]) =>
+    !clients.some((client) => client.id === id) && comparison.name.length >= 3 && normalized(savedName) === comparison.name,
+  );
   const matches = (c: { name: string; address?: string }) =>
     !q ||
     c.name.toLowerCase().includes(q) ||
     (c.address ?? "").toLowerCase().includes(q);
+
+  const activeSequence = (() => {
+    if (!active) return [] as string[];
+    const ids = active.clientIds?.filter((id) => clients.some((client) => client.id === id && !client.archivedAt)) ?? [];
+    if (!active.temporary) {
+      const known = new Set(ids);
+      ids.push(...clients
+        .filter((client) => !client.archivedAt && client.routeId === active.routeId && !known.has(client.id))
+        .sort((a, b) => a.visitOrder - b.visitOrder)
+        .map((client) => client.id));
+    }
+    if (ids.length) return ids;
+    return clients.filter((client) => !client.archivedAt && client.routeId === active.routeId)
+      .sort((a, b) => a.visitOrder - b.visitOrder).map((client) => client.id);
+  })();
+  const lastVisitedIndex = activeSequence.reduce((last, id, index) => active?.sales[id]?.completed ? index : last, -1);
+  const afterLastVisitedPosition = lastVisitedIndex + 2;
+  const appliesToActiveRoute = !!active && (active.temporary || active.routeId === routeId);
 
   const captureForNew = async () => {
     setCapturingNew(true);
@@ -310,6 +599,53 @@ export function ClientsTab() {
     } finally {
       setCapturingId(null);
     }
+  };
+
+  const submitNewClient = (positionMode?: "after-last" | "other") => {
+    if (!name.trim() || !routeId) return;
+    const oldClient = archiveMatches[0];
+    if (oldClient) {
+      const restore = window.confirm(`“${oldClient.name}” ya estaba registrado y fue archivado el ${new Date(oldClient.archivedAt!).toLocaleDateString("es-MX")}. ¿Reactivar el registro anterior y conservar su historial? Pulsa Cancelar para continuar con un cliente nuevo.`);
+      if (restore) {
+        actions.restoreClient(oldClient.id, routeId);
+        toast.success("Cliente reactivado; se conservó su historial");
+        setName(""); setAddress(""); setOrder(""); setCoords(null); setPlaceId(null); setOrderPromptOpen(false);
+        return;
+      }
+    }
+    if (deletedNameMatch && !window.confirm(`Ya se había eliminado permanentemente un cliente llamado “${deletedNameMatch[1]}”. ¿Confirmas que deseas crear un registro nuevo?`)) return;
+    if (prospectMatches.length > 0 && !window.confirm(`Ya hay un prospecto registrado para este nombre o ubicación (“${prospectMatches[0].name}”). ¿Deseas crear el cliente y conservar el antecedente de la visita?`)) return;
+
+    const routeClientCount = clients.filter((client) => !client.archivedAt && client.routeId === routeId).length;
+    let visitOrder = Number(order || (routeClientCount + 1));
+    let activeRoutePosition: number | undefined;
+    if (active && appliesToActiveRoute && positionMode === "after-last") {
+      activeRoutePosition = afterLastVisitedPosition;
+      visitOrder = !active.temporary && active.routeId === routeId ? afterLastVisitedPosition : routeClientCount + 1;
+    } else if (active && appliesToActiveRoute && positionMode === "other") {
+      const specifiedPosition = Number(manualActivePosition || order);
+      activeRoutePosition = Number.isFinite(specifiedPosition) && specifiedPosition > 0
+        ? specifiedPosition
+        : activeSequence.length + 1;
+      visitOrder = active.routeId === routeId && !active.temporary
+        ? activeRoutePosition
+        : Number(order || (routeClientCount + 1));
+    }
+
+    const allIds = groups.map((g) => g.id);
+    const enabledIds = allIds.filter((id) => newEnabledGroups.has(id));
+    actions.addClient({
+      name: name.trim(),
+      address: address.trim(),
+      routeId,
+      visitOrder,
+      ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+      ...(placeId ? { placeId, verifiedAddress: address.trim() } : {}),
+      ...(enabledIds.length && enabledIds.length !== allIds.length ? { enabledGroupIds: enabledIds } : {}),
+    }, activeRoutePosition != null ? { activeRoutePosition } : undefined);
+    setName(""); setAddress(""); setOrder(""); setCoords(null); setPlaceId(null); setOrderPromptOpen(false); setManualActivePosition("");
+    setNewEnabledGroups(pickDefaultGroups(groups));
+    toast.success(activeRoutePosition != null ? "Cliente agregado a la secuencia de la ruta activa" : "Cliente agregado");
   };
 
   return (
@@ -381,28 +717,15 @@ export function ClientsTab() {
           </SelectContent>
         </Select>
         <Input type="number" min={1} placeholder="Orden" value={order} onChange={(e) => setOrder(e.target.value)} />
-        <Button
-          onClick={() => {
-            if (!name.trim() || !routeId) return;
-            const visitOrder = Number(order || (clients.filter((c) => c.routeId === routeId).length + 1));
-            const allIds = groups.map((g) => g.id);
-            const enabledIds = allIds.filter((id) => newEnabledGroups.has(id));
-            actions.addClient({
-              name: name.trim(),
-              address: address.trim(),
-              routeId,
-              visitOrder,
-              ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
-              ...(placeId ? { placeId, verifiedAddress: address.trim() } : {}),
-              ...(enabledIds.length && enabledIds.length !== allIds.length
-                ? { enabledGroupIds: enabledIds }
-                : {}),
-            });
-            setName(""); setAddress(""); setOrder(""); setCoords(null); setPlaceId(null);
-            // Cada cliente nuevo vuelve a empezar solo con "Bolsa 290 gms" habilitado.
-            setNewEnabledGroups(pickDefaultGroups(groups));
-          }}
-        >
+        <Button onClick={() => {
+          if (!name.trim() || !routeId) return;
+          if (active && appliesToActiveRoute) {
+            setManualActivePosition(order || String(activeSequence.length + 1));
+            setOrderPromptOpen(true);
+          } else {
+            submitNewClient();
+          }
+        }}>
           <Plus className="mr-2 h-4 w-4" /> Agregar
         </Button>
       </div>
@@ -417,6 +740,28 @@ export function ClientsTab() {
           toast.success("Dirección verificada con Google");
         }}
       />
+      <Dialog open={orderPromptOpen} onOpenChange={setOrderPromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿En qué posición agregarlo a la ruta activa?</DialogTitle>
+            <DialogDescription>
+              {lastVisitedIndex >= 0
+                ? `El último cliente visitado en la secuencia es ${clients.find((client) => client.id === activeSequence[lastVisitedIndex])?.name ?? "el último cliente"}.`
+                : "Todavía no hay clientes visitados en esta ruta."}
+              {" "}Puedes colocarlo automáticamente después de esa visita o elegir otra posición.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="active-route-position">Número de visita para otra posición</Label>
+            <Input id="active-route-position" type="number" min={1} value={manualActivePosition} onChange={(event) => setManualActivePosition(event.target.value)} />
+          </div>
+          <DialogFooter className="flex-col sm:flex-row">
+            <Button variant="outline" onClick={() => setOrderPromptOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => submitNewClient("other")}>Usar otra posición</Button>
+            <Button onClick={() => submitNewClient("after-last")}>Después del último visitado</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {groups.length > 1 && (
         <div className="mb-3 rounded-lg border border-border/40 bg-muted/30 p-2.5">
           <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold">
@@ -457,14 +802,22 @@ export function ClientsTab() {
         </p>
       )}
 
+      {(archiveMatches.length > 0 || prospectMatches.length > 0 || deletedNameMatch) && (
+        <div className="mb-3 space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <p className="font-semibold text-amber-700 dark:text-amber-300">Coincidencias encontradas</p>
+          {archiveMatches.map((client) => <p key={client.id}>Cliente archivado: <strong>{client.name}</strong>{client.address ? ` · ${client.address}` : ""}</p>)}
+          {deletedNameMatch && <p>Cliente eliminado anteriormente: <strong>{deletedNameMatch[1]}</strong>. Su historial anterior permanece guardado.</p>}
+          {prospectMatches.map((prospect) => <p key={prospect.id}>Prospecto visitado: <strong>{prospect.name}</strong>{prospect.visits.length ? ` · última visita ${new Date(prospect.visits[prospect.visits.length - 1].date).toLocaleDateString("es-MX")}` : ""}</p>)}
+          <p className="text-xs text-muted-foreground">Se compara nombre, dirección y una ubicación dentro de 100 metros. Confirma que sea el mismo lugar antes de continuar.</p>
+        </div>
+      )}
+
       <GpxImportRow />
 
       {(() => {
         const routeIds = new Set(routes.map((r) => r.id));
         const filtered = clients
-          .filter((c) =>
-            filterRouteId === "all" ? true : c.routeId === filterRouteId,
-          )
+          .filter((c) => !c.archivedAt && (filterRouteId === "all" || c.routeId === filterRouteId))
           .filter(matches);
         const totalShown = filtered.length;
         const visibleRoutes =
@@ -503,6 +856,7 @@ export function ClientsTab() {
                         key={c.id}
                         client={c}
                         products={products}
+                        focusOnOpen={focusClientId === c.id}
                         capturing={capturingId === c.id}
                         onCapture={() => captureForExisting(c.id)}
                       />
@@ -524,6 +878,7 @@ export function ClientsTab() {
                         key={c.id}
                         client={c}
                         products={products}
+                        focusOnOpen={focusClientId === c.id}
                         capturing={capturingId === c.id}
                         onCapture={() => captureForExisting(c.id)}
                       />
@@ -549,6 +904,7 @@ function ClientEditForm({
 }) {
   const routes = useStore((s) => s.routes);
   const allClients = useStore((s) => s.clients);
+  const chains = useStore((s) => s.chains);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [name, setName] = useState(client.name);
   const [address, setAddress] = useState(client.address ?? "");
@@ -758,6 +1114,21 @@ function ClientEditForm({
                 </SelectContent>
               </Select>
             </div>
+            {client.creditType === "B" && (
+              <div className="min-w-48">
+                <Label className="text-[10px] uppercase text-muted-foreground">Cadena / matriz</Label>
+                <Select
+                  value={client.chainId ?? "__none__"}
+                  onValueChange={(value) => actions.updateClient(client.id, { chainId: value === "__none__" ? null : value })}
+                >
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Seleccionar cadena" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sin cadena</SelectItem>
+                    {chains.map((chain) => <SelectItem key={chain.id} value={chain.id}>{chain.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <Button
               size="sm"
               variant={client.credit ? "default" : "outline"}
@@ -800,16 +1171,26 @@ function ClientEditForm({
 function ClientEditRow({
   client,
   products,
+  focusOnOpen = false,
   capturing,
   onCapture,
 }: {
   client: Client;
   products: Product[];
+  focusOnOpen?: boolean;
   capturing: boolean;
   onCapture: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(focusOnOpen);
+  const rowRef = useRef<HTMLDivElement>(null);
   const isActive = client.active !== false;
+
+  useEffect(() => {
+    if (!focusOnOpen) return;
+    setOpen(true);
+    const timer = window.setTimeout(() => rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+    return () => window.clearTimeout(timer);
+  }, [focusOnOpen]);
 
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -818,6 +1199,7 @@ function ClientEditRow({
 
   return (
     <div
+      ref={rowRef}
       className={`rounded-xl border bg-card p-3 transition ${isActive ? "" : "opacity-60"}`}
     >
       <button
@@ -935,11 +1317,12 @@ function ClientEditRow({
           size="icon"
           className="h-8 w-8"
           onClick={() => {
-            if (confirm(`¿Eliminar al cliente "${client.name}"? Esta acción no se puede deshacer.`)) {
+            if (confirm(`¿Archivar al cliente "${client.name}"? Saldrá de las rutas, pero sus ventas e historial se conservarán y podrás reactivarlo después.`)) {
               actions.removeClient(client.id);
+              toast.success("Cliente archivado; su historial se conservó");
             }
           }}
-          title="Eliminar cliente"
+          title="Archivar cliente y conservar su historial"
         >
           <Trash2 className="h-4 w-4 text-destructive" />
         </Button>

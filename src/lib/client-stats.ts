@@ -1,6 +1,7 @@
 import {
   clientSaleAmount,
   clientNetUnits,
+  clientUnitsSold,
   normalizeSale,
   priceFor,
   type ActiveRoute,
@@ -79,6 +80,7 @@ export type LastPurchase = {
     qty: number;
     price: number;
     surtido: number;
+    obsequios: number;
     devolucion: number;
     existenciaAnterior: number;
     existenciaActual: number;
@@ -111,15 +113,17 @@ export function getLastPurchase(
   const items = products
     .map((p) => {
       const surtido = Number(top.sale.surtido?.[p.id] ?? 0);
+      const obsequios = Number(top.sale.obsequios?.[p.id] ?? 0);
       const devolucion = Number(top.sale.devolucion?.[p.id] ?? 0);
       const existenciaAnterior = Number(top.sale.existenciaAnterior?.[p.id] ?? 0);
       const existenciaActual = Number(top.sale.existenciaActual?.[p.id] ?? 0);
-      const qty = surtido - devolucion;
+      const qty = clientUnitsSold(top.sale, p.id) - devolucion;
       return {
         name: p.name,
         qty,
         price: priceFor(top.sale, p),
         surtido,
+        obsequios,
         devolucion,
         existenciaAnterior,
         existenciaActual,
@@ -170,15 +174,17 @@ export function getAllPurchases(
     const items = products
       .map((p) => {
         const surtido = Number(hit.sale.surtido?.[p.id] ?? 0);
+        const obsequios = Number(hit.sale.obsequios?.[p.id] ?? 0);
         const devolucion = Number(hit.sale.devolucion?.[p.id] ?? 0);
         const existenciaAnterior = Number(hit.sale.existenciaAnterior?.[p.id] ?? 0);
         const existenciaActual = Number(hit.sale.existenciaActual?.[p.id] ?? 0);
-        const qty = surtido - devolucion;
+        const qty = clientUnitsSold(hit.sale, p.id) - devolucion;
         return {
           name: p.name,
           qty,
           price: priceFor(hit.sale, p),
           surtido,
+          obsequios,
           devolucion,
           existenciaAnterior,
           existenciaActual,
@@ -218,7 +224,7 @@ export function getClientTopProducts(
     let units = 0;
     let visitsWithUnits = 0;
     for (const s of sales) {
-      const u = Number(s.surtido?.[p.id] ?? 0);
+      const u = clientUnitsSold(s, p.id);
       if (u > 0) {
         units += u;
         visitsWithUnits += 1;

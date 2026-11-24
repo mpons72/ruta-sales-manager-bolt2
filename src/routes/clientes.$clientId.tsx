@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { VerifyAddressDialog } from "@/components/VerifyAddressDialog";
-import { useStore, actions, normalizeSale, type Client, type ClientSale, type HistoryEntry, type Product, type ActiveRoute } from "@/lib/store";
+import { useStore, actions, getCreditBalance, normalizeSale, type Client, type ClientSale, type HistoryEntry, type Product, type ActiveRoute } from "@/lib/store";
 import { getLastPurchase } from "@/lib/client-stats";
 import { mapsUrl, openMapChooser } from "@/lib/geo";
 import { useAskEachTime } from "@/lib/nav-provider";
@@ -195,6 +195,8 @@ function ClienteDetallePage() {
   const products = useStore((s) => s.products);
   const history = useStore((s) => s.history);
   const active = useStore((s) => s.active);
+  const creditLedger = useStore((s) => s.creditLedger);
+  const chains = useStore((s) => s.chains);
   const updateClient = actions.updateClient;
   const clearClientVerification = actions.clearClientVerification;
   const askEachTime = useAskEachTime();
@@ -238,7 +240,7 @@ function ClienteDetallePage() {
       let visitsWithUnits = 0;
       let totalAntes = 0;
       for (const sale of sales) {
-        const u = recordUnits(sale.surtido, p);
+        const u = Math.max(0, recordUnits(sale.surtido, p) - recordUnits(sale.obsequios, p));
         const d = recordUnits(sale.devolucion, p);
         if (u > 0) {
           units += u;
@@ -297,6 +299,12 @@ function ClienteDetallePage() {
   }
 
   const hasData = data.visits > 0 && (data.totalUnits > 0 || data.totalReturns > 0);
+  const creditBalance = client.creditType === "A"
+    ? getCreditBalance(creditLedger, "client", client.id)
+    : client.creditType === "B" && client.chainId
+      ? getCreditBalance(creditLedger, "chain", client.chainId)
+      : null;
+  const assignedChain = client.chainId ? chains.find((chain) => chain.id === client.chainId) : null;
 
   return (
     <div className="min-h-screen" style={{ background: "var(--gradient-warm)" }}>
@@ -437,6 +445,17 @@ function ClienteDetallePage() {
             <KPI label="Vendidas" value={String(data.netUnits)} />
             <KPI label="Total" value={currency(data.totalAmount)} />
           </div>
+          {creditBalance && (
+            <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {client.creditType === "A" ? "Saldo pendiente · crédito por visita" : `Saldo pendiente · ${assignedChain?.name ?? "cadena"}`}
+              </div>
+              <div className="mt-1 text-sm font-bold tabular-nums">{creditBalance.pieces} piezas · {currency(creditBalance.amount)}</div>
+            </div>
+          )}
+          {client.creditType === "B" && !client.chainId && (
+            <p className="mt-3 text-xs text-warning">Este cliente tipo B aún no está asignado a una cadena.</p>
+          )}
         </Card>
 
         <SalesByDateCard client={client} products={products} salesWithDate={salesWithDate} handledIds={data.handledIds} />
@@ -685,12 +704,13 @@ function SalesByDateCard({
     return base
       .map((p) => {
         const surtido = recordUnits(chosen.sale.surtido, p);
+        const obsequios = recordUnits(chosen.sale.obsequios, p);
         const devolucion = recordUnits(chosen.sale.devolucion, p);
         const existenciaAnterior = recordUnits(chosen.sale.existenciaAnterior, p);
         const existenciaActual = recordUnits(chosen.sale.existenciaActual, p);
-        const qty = surtido - devolucion;
+        const qty = surtido - obsequios - devolucion;
         const price = priceFor(chosen.sale, p);
-        return { id: p.id, name: p.name, qty, price, surtido, devolucion, existenciaAnterior, existenciaActual };
+        return { id: p.id, name: p.name, qty, price, surtido, obsequios, devolucion, existenciaAnterior, existenciaActual };
       })
       .filter((x) => x.surtido !== 0 || x.devolucion !== 0 || x.existenciaAnterior !== 0 || x.existenciaActual !== 0);
   }, [chosen, products, handledIds]);
@@ -741,6 +761,11 @@ function SalesByDateCard({
                   {currency(total)}
                 </div>
               </div>
+              {client.creditType === "A" && chosen.sale.previousCreditPayment && (
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Pago del saldo anterior: {currency(chosen.sale.previousCreditPayment.amount)}
+                </div>
+              )}
 
               {items.length > 0 ? (
                 <div className="mt-3 overflow-x-auto">
@@ -750,6 +775,7 @@ function SalesByDateCard({
                         <th className="py-2 pr-2">Producto</th>
                         <th className="py-2 px-2 text-right">Antes</th>
                         <th className="py-2 px-2 text-right">Surt.</th>
+                        <th className="py-2 px-2 text-right">Obseq.</th>
                         <th className="py-2 px-2 text-right">Dev.</th>
                         <th className="py-2 px-2 text-right">Precio</th>
                         <th className="py-2 pl-2 text-right">Subtotal</th>
@@ -761,6 +787,7 @@ function SalesByDateCard({
                           <td className="py-2 pr-2 font-medium">{it.name}</td>
                           <td className="py-2 px-2 text-right tabular-nums">{it.existenciaAnterior}</td>
                           <td className="py-2 px-2 text-right tabular-nums">{it.surtido}</td>
+                          <td className="py-2 px-2 text-right tabular-nums">{it.obsequios}</td>
                           <td className="py-2 px-2 text-right tabular-nums">{it.devolucion}</td>
                           <td className="py-2 px-2 text-right tabular-nums">${it.price.toFixed(2)}</td>
                           <td className="py-2 pl-2 text-right tabular-nums">

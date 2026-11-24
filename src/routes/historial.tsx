@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { actions, useStore, clientSaleAmount, getLastSaleForClient, type HistoryEntry, type ClientSale } from "@/lib/store";
+import { actions, getCreditBalance, getRouteCashCreditSummary, useStore, clientSaleAmount, getLastSaleForClient, type HistoryEntry, type ClientSale } from "@/lib/store";
 import { AdminPasswordPrompt } from "@/components/AdminPasswordPrompt";
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { RemisionData } from "@/lib/remision";
@@ -37,6 +37,10 @@ function HistorialPage() {
   const routes = useStore((s) => s.routes);
   const products = useStore((s) => s.products);
   const allClients = useStore((s) => s.clients);
+  const clientNameSnapshots = useStore((s) => s.clientNameSnapshots);
+  const clientCreditSnapshots = useStore((s) => s.clientCreditSnapshots);
+  const creditLedger = useStore((s) => s.creditLedger);
+  const chains = useStore((s) => s.chains);
   const audit = useStore((s) => s.audit);
   const hasActiveRoute = useStore((s) => s.active !== null);
 
@@ -65,8 +69,32 @@ function HistorialPage() {
       visits += 1;
       total += clientSaleAmount(sale, products);
     }
-    return { total, visits };
+    const creditSummary = getRouteCashCreditSummary(h, allClients, products, creditLedger, true, clientCreditSnapshots);
+    return { total, visits, ...creditSummary };
   };
+
+  const currentCreditBalances = [
+    ...allClients.filter((client) => client.creditType === "A").map((client) => ({
+      id: `client-${client.id}`, label: `${client.name} · tipo A`,
+      balance: getCreditBalance(creditLedger, "client", client.id),
+    })),
+    ...chains.filter((chain) => allClients.some((client) => client.creditType === "B" && client.chainId === chain.id)).map((chain) => ({
+      id: `chain-${chain.id}`, label: `${chain.name} · tipo B`,
+      balance: getCreditBalance(creditLedger, "chain", chain.id),
+    })),
+  ];
+  const knownCreditClients = new Set(allClients.filter((client) => client.creditType === "A").map((client) => client.id));
+  const deletedCreditClientIds = new Set(creditLedger.filter((movement) => movement.accountType === "client").map((movement) => movement.accountId));
+  for (const clientId of deletedCreditClientIds) {
+    const snapshot = clientCreditSnapshots[clientId];
+    if (!snapshot || snapshot.creditType !== "A" || knownCreditClients.has(clientId)) continue;
+    const balance = getCreditBalance(creditLedger, "client", clientId);
+    if (balance.pieces !== 0 || balance.amount !== 0) currentCreditBalances.push({
+      id: `deleted-client-${clientId}`,
+      label: `${clientNameSnapshots[clientId] ?? "Cliente eliminado"} · tipo A (eliminado)`,
+      balance,
+    });
+  }
 
   // Filtrar historial por ruta (incluir rutas temporales cuando se selecciona "all")
   const filteredHistory = selectedRouteId === "all"
@@ -105,6 +133,19 @@ function HistorialPage() {
           </p>
         </div>
 
+        {currentCreditBalances.length > 0 && (
+          <Card className="p-4">
+            <h2 className="mb-2 text-sm font-semibold">Saldos actuales de crédito</h2>
+            <div className="space-y-1">
+              {currentCreditBalances.map(({ id, label, balance }) => (
+                <div key={id} className="flex flex-wrap justify-between gap-2 text-xs">
+                  <span>{label}</span><span className="font-semibold tabular-nums">{balance.pieces} pzas · {currency(balance.amount)}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
         {/* Filtro por ruta */}
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium">Filtrar por ruta:</label>
@@ -140,7 +181,7 @@ function HistorialPage() {
         <div className="space-y-3">
           {filteredHistory.map((h) => {
             const route = routes.find((r) => r.id === h.routeId);
-            const { total, visits } = totalsFor(h);
+            const { total, visits, collected, creditPlaced } = totalsFor(h);
             const date = new Date(h.date);
             const isEditing = editingId === h.endedAt;
             const isTemporary = h.temporary || h.routeId === "__tmp__";
@@ -195,6 +236,7 @@ function HistorialPage() {
                           <span className="text-2xl font-extrabold tabular-nums text-primary">
                             {currency(total)}
                           </span>
+                          <span className="text-xs text-muted-foreground">Cobrado {currency(collected)} · A crédito {currency(creditPlaced)}</span>
                           <span className="text-base font-semibold tabular-nums">
                             {visits} visitas
                           </span>
@@ -314,7 +356,7 @@ function HistorialPage() {
               <div className="max-h-[60vh] space-y-2 overflow-y-auto">
                 {entries.map(([cid, sale]) => {
                   const c = allClients.find((x) => x.id === cid);
-                  const name = c?.name ?? `Cliente ${cid.slice(0, 6)}`;
+                  const name = c?.name ?? clientNameSnapshots[cid] ?? `Cliente ${cid.slice(0, 6)}`;
                   const amount = clientSaleAmount(sale, products);
                   return (
                     <div key={cid} className="flex items-center justify-between gap-2 rounded-lg border p-2">
@@ -327,11 +369,12 @@ function HistorialPage() {
                         variant="outline"
                         onClick={() =>
                           setReceiptData({
-                            client: { name, address: c?.address },
+                            client: { name, address: c?.address, creditType: c?.creditType },
                             sale,
                             products,
                             date: notasFor.date,
                             folio: new Date(notasFor.endedAt).getTime().toString(36).toUpperCase().slice(-6) + "-" + cid.slice(0, 3).toUpperCase(),
+                            ...(c?.creditType === "A" ? { creditBalance: getCreditBalance(creditLedger, "client", c.id) } : {}),
                           })
                         }
                       >

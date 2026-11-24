@@ -1,11 +1,14 @@
 import {
   clientSaleAmount,
   computeRemaining,
+  getRouteCashCreditSummary,
   priceFor,
   type ActiveRoute,
   type Client,
   type Product,
   type Route as RouteT,
+  type CreditMovement,
+  type DeletedClientCreditSnapshot,
 } from "./store";
 
 export function buildReportData(
@@ -13,12 +16,25 @@ export function buildReportData(
   products: Product[],
   clients: Client[],
   routes: RouteT[],
+  creditLedger: CreditMovement[] = [],
+  clientNameSnapshots: Record<string, string> = {},
+  clientCreditSnapshots: Record<string, DeletedClientCreditSnapshot> = {},
 ) {
   const route = routes.find((r) => r.id === target.routeId);
   const remaining = computeRemaining(target, products);
-  const clientList = clients
+  const visibleClients = clients
     .filter((c) => c.routeId === target.routeId)
     .sort((a, b) => a.visitOrder - b.visitOrder);
+  const visibleIds = new Set(visibleClients.map((client) => client.id));
+  const deletedClientRows = Object.keys(target.sales ?? {})
+    .filter((id) => !visibleIds.has(id) && !!clientNameSnapshots[id])
+    .map((id, index) => ({
+      id,
+      name: clientNameSnapshots[id],
+      routeId: target.routeId,
+      visitOrder: visibleClients.length + index + 1,
+    }));
+  const clientList = [...visibleClients, ...deletedClientRows];
 
   let totalDinero = 0;
   let totalUnidades = 0;
@@ -42,12 +58,15 @@ export function buildReportData(
     totalDinero += clientSaleAmount(sale, products);
   }
   for (const v of Object.values(porProducto)) totalUnidades += v.venta;
+  const { collected, creditPlaced } = getRouteCashCreditSummary(target, clients, products, creditLedger, false, clientCreditSnapshots);
 
   return {
     route,
     remaining,
     clientList,
     totalDinero,
+    totalCobrado: collected,
+    totalCreditoColocado: creditPlaced,
     totalUnidades,
     clientesAtendidos,
     porProducto,
@@ -74,12 +93,17 @@ export function exportReportCSV(
   products: Product[],
   clients: Client[],
   routes: RouteT[],
+  creditLedger: CreditMovement[] = [],
+  clientNameSnapshots: Record<string, string> = {},
+  clientCreditSnapshots: Record<string, DeletedClientCreditSnapshot> = {},
 ) {
-  const data = buildReportData(target, products, clients, routes);
+  const data = buildReportData(target, products, clients, routes, creditLedger, clientNameSnapshots, clientCreditSnapshots);
   const lines: string[] = [];
   lines.push(`Reporte de Ruta,${csvEscape(data.route?.name ?? "")}`);
   lines.push(`Fecha,${new Date(target.date).toLocaleString()}`);
-  lines.push(`Total vendido,${data.totalDinero.toFixed(2)}`);
+  lines.push(`Producto colocado,${data.totalDinero.toFixed(2)}`);
+  lines.push(`Dinero cobrado,${data.totalCobrado.toFixed(2)}`);
+  lines.push(`Producto colocado a crédito,${data.totalCreditoColocado.toFixed(2)}`);
   lines.push(`Unidades vendidas,${data.totalUnidades}`);
   lines.push(`Clientes atendidos,${data.clientesAtendidos}/${data.clientList.length}`);
   lines.push("");
@@ -127,8 +151,11 @@ export function exportReportPDF(
   products: Product[],
   clients: Client[],
   routes: RouteT[],
+  creditLedger: CreditMovement[] = [],
+  clientNameSnapshots: Record<string, string> = {},
+  clientCreditSnapshots: Record<string, DeletedClientCreditSnapshot> = {},
 ) {
-  const data = buildReportData(target, products, clients, routes);
+  const data = buildReportData(target, products, clients, routes, creditLedger, clientNameSnapshots, clientCreditSnapshots);
   const fmt = (n: number) => `$${n.toFixed(2)}`;
 
   const productRows = products
@@ -155,7 +182,7 @@ export function exportReportPDF(
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1a1a1a; padding: 24px; }
 h1 { margin: 0 0 4px; font-size: 24px; }
 .muted { color: #666; font-size: 12px; }
-.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0; }
+.kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin: 20px 0; }
 .kpi { border: 1px solid #eee; border-radius: 8px; padding: 12px; }
 .kpi .label { font-size: 10px; text-transform: uppercase; color: #888; letter-spacing: .5px; }
 .kpi .value { font-size: 20px; font-weight: 700; margin-top: 4px; }
@@ -171,7 +198,9 @@ td:not(:nth-child(2)), th:not(:nth-child(2)) { text-align: right; }
 <h1>${data.route?.name ?? "Ruta"}</h1>
 <div class="muted">Reporte generado el ${new Date().toLocaleString()} · Ruta del ${new Date(target.date).toLocaleString()}</div>
 <div class="kpis">
-  <div class="kpi primary"><div class="label">Total vendido</div><div class="value">${fmt(data.totalDinero)}</div></div>
+  <div class="kpi primary"><div class="label">Producto colocado</div><div class="value">${fmt(data.totalDinero)}</div></div>
+  <div class="kpi"><div class="label">Dinero cobrado</div><div class="value">${fmt(data.totalCobrado)}</div></div>
+  <div class="kpi"><div class="label">Producto a crédito</div><div class="value">${fmt(data.totalCreditoColocado)}</div></div>
   <div class="kpi"><div class="label">Unidades</div><div class="value">${data.totalUnidades}</div></div>
   <div class="kpi"><div class="label">Clientes</div><div class="value">${data.clientesAtendidos}/${data.clientList.length}</div></div>
   <div class="kpi"><div class="label">Productos</div><div class="value">${products.length}</div></div>
@@ -197,8 +226,11 @@ export function exportReportJSON(
   products: Product[],
   clients: Client[],
   routes: RouteT[],
+  creditLedger: CreditMovement[] = [],
+  clientNameSnapshots: Record<string, string> = {},
+  clientCreditSnapshots: Record<string, DeletedClientCreditSnapshot> = {},
 ) {
-  const data = buildReportData(target, products, clients, routes);
+  const data = buildReportData(target, products, clients, routes, creditLedger, clientNameSnapshots, clientCreditSnapshots);
   const payload = {
     route: data.route,
     date: target.date,
@@ -208,6 +240,8 @@ export function exportReportJSON(
     sales: target.sales,
     summary: {
       totalDinero: data.totalDinero,
+      totalCobrado: data.totalCobrado,
+      totalCreditoColocado: data.totalCreditoColocado,
       totalUnidades: data.totalUnidades,
       clientesAtendidos: data.clientesAtendidos,
       remaining: data.remaining,

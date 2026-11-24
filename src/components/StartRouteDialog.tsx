@@ -44,7 +44,7 @@ export function StartRouteDialog({
   const [verifying, setVerifying] = useState(false);
 
   const routeClients = useMemo(
-    () => allClients.filter((c) => c.routeId === routeId && c.active !== false),
+    () => allClients.filter((c) => !c.archivedAt && c.routeId === routeId && c.active !== false),
     [allClients, routeId],
   );
   const products = useMemo(

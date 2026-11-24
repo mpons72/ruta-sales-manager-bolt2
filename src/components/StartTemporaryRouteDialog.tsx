@@ -134,7 +134,7 @@ export function StartTemporaryRouteDialog({
   const visibleClients = useMemo(() => {
     const q = filter.trim().toLowerCase();
     return allClients
-      .filter((c) => c.active !== false)
+      .filter((c) => !c.archivedAt && c.active !== false)
       .filter((c) => routeFilter === "all" || c.routeId === routeFilter)
       .filter((c) => {
         if (!q) return true;

@@ -24,8 +24,10 @@ import {
 import {
   actions,
   clientSaleAmount,
+  clientNetUnits,
   computeRemaining,
   getCreditBalance,
+  getRouteCashCreditSummary,
   getEffectivePrices,
   productsForClient,
   productsForClients,
@@ -39,10 +41,13 @@ import { VerifyAddressDialog } from "@/components/VerifyAddressDialog";
 import { buildGpx, downloadGpx } from "@/lib/gpx";
 import { getLastPurchase, getClientTopProducts, getAllPurchases } from "@/lib/client-stats";
 import { toast } from "sonner";
-import { CheckCircle2, MapPin, Truck, ArrowRight, Flag, Sparkles, Navigation, Lock, ChevronDown, ChevronUp, CreditCard, Banknote, Crosshair, Loader2, Printer, Download, BarChart3, History, ShieldCheck, Plus, X } from "lucide-react";
+import { CheckCircle2, MapPin, Truck, ArrowRight, Flag, Sparkles, Navigation, Lock, ChevronDown, ChevronUp, CreditCard, Banknote, Crosshair, Loader2, Printer, Download, BarChart3, History, ShieldCheck, Plus, X, Pencil } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { RemisionData } from "@/lib/remision";
+import BackupScheduler from "@/lib/BackupSchedulerPlugin";
+import { Capacitor } from "@capacitor/core";
+import { backupFilename } from "@/lib/backup";
 
 export const Route = createFileRoute("/ruta")({
   head: () => ({
@@ -59,6 +64,8 @@ function RutaPage() {
   const allProducts = useStore((s) => s.products);
   const groups = useStore((s) => s.groups);
   const allClients = useStore((s) => s.clients);
+  const creditLedger = useStore((s) => s.creditLedger);
+  const deletedClientCreditSnapshots = useStore((s) => s.clientCreditSnapshots);
   const routes = useStore((s) => s.routes);
   const navProvider = useNavProvider();
   const askEachTime = useAskEachTime();
@@ -66,6 +73,7 @@ function RutaPage() {
 
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [closingRoute, setClosingRoute] = useState(false);
   const [openCarga, setOpenCarga] = useState(false);
   const [capturandoId, setCapturandoId] = useState<string | null>(null);
   const [tramosFrozen, setTramosFrozen] = useState<string[][] | null>(null);
@@ -74,6 +82,10 @@ function RutaPage() {
   const [receiptData, setReceiptData] = useState<RemisionData | null>(null);
   const [showAddClient, setShowAddClient] = useState(false);
   const [addClientSearch, setAddClientSearch] = useState("");
+  const openClientForEditing = (clientId: string) => {
+    localStorage.setItem("clientes:focus-client", clientId);
+    navigate({ to: "/clientes" });
+  };
 
   const capturarUbicacion = async (clientId: string, currentLat?: number | null) => {
     if (currentLat != null) {
@@ -105,18 +117,19 @@ function RutaPage() {
     if (active.clientIds && active.clientIds.length > 0) {
       const order = new Map(active.clientIds.map((id, i) => [id, i + 1]));
       const orderedClients = allClients
+        .filter((c) => !c.archivedAt)
         .filter((c) => order.has(c.id))
         .map((c) => ({ ...c, visitOrder: order.get(c.id) ?? c.visitOrder }))
         .sort((a, b) => a.visitOrder - b.visitOrder);
       if (active.temporary) return orderedClients;
       const included = new Set(active.clientIds);
       const newRouteClients = allClients
-        .filter((c) => c.routeId === active.routeId && !included.has(c.id))
+        .filter((c) => !c.archivedAt && c.routeId === active.routeId && !included.has(c.id))
         .sort((a, b) => a.visitOrder - b.visitOrder);
       return [...orderedClients, ...newRouteClients];
     }
     return allClients
-      .filter((c) => c.routeId === active.routeId)
+      .filter((c) => !c.archivedAt && c.routeId === active.routeId)
       .sort((a, b) => a.visitOrder - b.visitOrder);
   }, [allClients, active]);
 
@@ -171,6 +184,35 @@ function RutaPage() {
     }
   };
 
+  const closeRouteWithBackup = async () => {
+    if (closingRoute) return;
+    setClosingRoute(true);
+    try {
+      const data = actions.exportData();
+      const filename = backupFilename();
+      if (Capacitor.isNativePlatform()) {
+        await BackupScheduler.saveToDownloads({ data, filename });
+      } else {
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+      }
+      actions.endRoute();
+      setConfirmEnd(false);
+      navigate({ to: "/reporte" });
+    } catch (error) {
+      toast.error(`No se cerró la ruta porque no se pudo guardar el respaldo. ${error instanceof Error ? error.message : "Intenta de nuevo."}`);
+    } finally {
+      setClosingRoute(false);
+    }
+  };
+
   if (!active) {
     return (
       <div className="min-h-screen" style={{ background: "var(--gradient-warm)" }}>
@@ -193,16 +235,9 @@ function RutaPage() {
   const inicialTotal = products.reduce((acc, p) => acc + (active.initialInventory[p.id] ?? 0), 0);
   const quedaTotal = products.reduce((acc, p) => acc + (remaining[p.id] ?? 0), 0);
 
-  // Totales efectivo / crédito
-  let efectivo = 0;
-  let credito = 0;
-  for (const c of clients) {
-    const sale = active.sales[c.id];
-    if (!sale?.completed) continue;
-    const amt = clientSaleAmount(sale, products);
-    if (sale.paymentType === "credit" || c.credit) credito += amt;
-    else efectivo += amt;
-  }
+  const { collected: efectivo, creditPlaced: credito } = getRouteCashCreditSummary(
+    active, clients, products, creditLedger, true, deletedClientCreditSnapshots,
+  );
 
   const proxima = clients.find((c) => !active.sales[c.id]?.completed);
 
@@ -429,8 +464,8 @@ function RutaPage() {
             </Button>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <Stat label="Efectivo" value={`$${efectivo.toFixed(2)}`} />
-            <Stat label="Crédito" value={`$${credito.toFixed(2)}`} />
+            <Stat label="Dinero cobrado" value={`$${efectivo.toFixed(2)}`} />
+            <Stat label="Producto a crédito" value={`$${credito.toFixed(2)}`} />
             <Stat label="Inicial" value={String(inicialTotal)} />
             <Stat label="Queda" value={String(quedaTotal)} />
           </div>
@@ -655,16 +690,30 @@ function RutaPage() {
                     onClick={(e) => {
                       e.stopPropagation();
                       setReceiptData({
-                        client: { name: c.name, address: c.address },
+                        client: { name: c.name, address: c.address, creditType: c.creditType },
                         sale: sale!,
                         products,
                         date: active.date,
+                        ...(c.creditType === "A" ? { creditBalance: getCreditBalance(creditLedger, "client", c.id) } : {}),
                       });
                     }}
                   >
                     <Printer className="h-4 w-4" />
                   </Button>
                 )}
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-8 w-8 shrink-0 border-primary/40 text-primary hover:bg-primary/10"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openClientForEditing(c.id);
+                  }}
+                  aria-label={`Editar ${c.name} en la pestaña Clientes`}
+                  title="Abrir este cliente en Clientes para editarlo"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
                 <Button
                   size="icon"
                   variant="ghost"
@@ -759,20 +808,17 @@ function RutaPage() {
             <DialogTitle>¿Cerrar la ruta?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Se generará el reporte final y la ruta se moverá al historial.
+            Antes de cerrar, se guardará un respaldo completo en Descargas. Si no se puede guardar, la ruta permanecerá abierta.
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmEnd(false)}>
+            <Button variant="outline" onClick={() => setConfirmEnd(false)} disabled={closingRoute}>
               Cancelar
             </Button>
             <Button
-              onClick={() => {
-                actions.endRoute();
-                setConfirmEnd(false);
-                navigate({ to: "/reporte" });
-              }}
+              onClick={closeRouteWithBackup}
+              disabled={closingRoute}
             >
-              Cerrar y ver reporte
+              {closingRoute ? "Guardando respaldo…" : "Guardar respaldo y cerrar"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -805,6 +851,7 @@ function RutaPage() {
             <div className="max-h-[40vh] space-y-1 overflow-y-auto">
               {allClients
                 .filter((c) =>
+                  !c.archivedAt &&
                   c.active !== false &&
                   !currentClientIds.has(c.id) &&
                   (addClientSearch.trim() === "" ||
@@ -830,7 +877,7 @@ function RutaPage() {
                   );
                 })}
               {allClients.filter((c) =>
-                c.active !== false &&
+                !c.archivedAt && c.active !== false &&
                 !currentClientIds.has(c.id) &&
                 (addClientSearch.trim() === "" ||
                  c.name.toLowerCase().includes(addClientSearch.toLowerCase()))
@@ -881,8 +928,10 @@ function ClientDialog({
   const allProducts = useStore((s) => s.products);
   const groups = useStore((s) => s.groups);
   const client = useStore((s) => s.clients.find((c) => c.id === clientId));
+  const allClients = useStore((s) => s.clients);
   const existing = useStore((s) => s.active?.sales[clientId]);
   const active = useStore((s) => s.active);
+  const history = useStore((s) => s.history);
   const creditLedger = useStore((s) => s.creditLedger);
   const saleRef = active ? `${active.routeId}:${active.date}:${clientId}` : "";
   const priorCreditBalance = useMemo(
@@ -905,6 +954,11 @@ function ClientDialog({
   const [devolucion, setDevolucion] = useState<Record<string, string>>(() =>
     Object.fromEntries(products.map((p) => [p.id, String(existing?.devolucion[p.id] ?? "")])),
   );
+  const [obsequios, setObsequios] = useState<Record<string, number>>(() => existing?.obsequios ?? {});
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [giftDraft, setGiftDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(existing?.obsequios ?? {}).map(([id, qty]) => [id, String(qty)])),
+  );
   const [paymentType, setPaymentType] = useState<"cash" | "credit">(
     existing?.paymentType ?? (client?.credit ? "credit" : "cash"),
   );
@@ -915,17 +969,42 @@ function ClientDialog({
   const [previousPaymentPieces, setPreviousPaymentPieces] = useState(() =>
     String(existing?.previousCreditPayment?.pieces ?? (client?.creditType === "A" ? priorDebtPieces : 0)),
   );
+  const [payPreviousDebt, setPayPreviousDebt] = useState(() =>
+    client?.creditType === "A" && (existing?.collectPreviousDebt ?? (priorDebtPieces > 0 || priorDebtAmount > 0)),
+  );
   const [collectionEdited, setCollectionEdited] = useState(false);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [adminPasswordOpen, setAdminPasswordOpen] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adjustmentProductId, setAdjustmentProductId] = useState(allProducts[0]?.id ?? "");
   const [adjustmentPieces, setAdjustmentPieces] = useState("0");
   const [adjustmentAmount, setAdjustmentAmount] = useState("0");
   const [adjustmentNote, setAdjustmentNote] = useState("");
 
+  const routeClientIds = useMemo(() => {
+    if (active?.clientIds?.length) return active.clientIds;
+    return allClients
+      .filter((routeClient) => !routeClient.archivedAt && routeClient.routeId === active?.routeId)
+      .sort((a, b) => a.visitOrder - b.visitOrder)
+      .map((routeClient) => routeClient.id);
+  }, [allClients, active?.routeId, active?.clientIds]);
+  const currentClientIndex = routeClientIds.indexOf(clientId);
+  const cumulativeClientIds = routeClientIds.slice(0, currentClientIndex >= 0 ? currentClientIndex + 1 : routeClientIds.length);
+  const previousRouteVisit = useMemo(() => {
+    if (!active) return null;
+    return history
+      .filter((entry) => entry.routeId === active.routeId && Object.values(entry.sales ?? {}).some((sale) => sale.completed))
+      .sort((a, b) => new Date(b.endedAt ?? b.date).getTime() - new Date(a.endedAt ?? a.date).getTime())[0] ?? null;
+  }, [history, active?.routeId]);
+
   useEffect(() => {
     setPreviousPaymentAmount(String(existing?.previousCreditPayment?.amount ?? (client?.creditType === "A" ? priorDebtAmount : 0)));
     setPreviousPaymentPieces(String(existing?.previousCreditPayment?.pieces ?? (client?.creditType === "A" ? priorDebtPieces : 0)));
+    setPayPreviousDebt(client?.creditType === "A" && (
+      existing?.collectPreviousDebt ?? (priorDebtPieces > 0 || priorDebtAmount > 0)
+    ));
     setCollectionEdited(false);
-  }, [clientId, client?.creditType, existing?.previousCreditPayment?.amount, existing?.previousCreditPayment?.pieces, priorDebtAmount, priorDebtPieces]);
+  }, [clientId, client?.creditType, existing?.previousCreditPayment?.amount, existing?.previousCreditPayment?.pieces, existing?.collectPreviousDebt, priorDebtAmount, priorDebtPieces]);
 
   if (!client || !active) return null;
 
@@ -943,51 +1022,123 @@ function ClientDialog({
   };
 
   const effectivePrices = getEffectivePrices(client, products);
-
-  const updatePreviousPaymentAmount = (value: string) => {
-    setPreviousPaymentAmount(value);
-    setCollectionEdited(true);
-    const amount = Math.max(0, Number(value) || 0);
-    const estimatedPieces = priorDebtAmount > 0 && priorDebtPieces > 0
-      ? Math.min(priorDebtPieces, Math.round(amount * priorDebtPieces / priorDebtAmount))
-      : 0;
-    setPreviousPaymentPieces(String(estimatedPieces));
+  const allEffectivePrices = getEffectivePrices(client, allProducts);
+  const calculatedDebtAmount = Math.round(Math.max(0, Math.floor(Number(adjustmentPieces) || 0)) * (allEffectivePrices[adjustmentProductId] ?? 0) * 100) / 100;
+  const giftCount = Object.values(obsequios).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
+  const saveGifts = () => {
+    const nextGifts = { ...obsequios };
+    const nextSurtido = { ...surtido };
+    for (const product of products) {
+      const before = Number(obsequios[product.id] ?? 0);
+      const after = Math.max(0, Math.floor(Number(giftDraft[product.id]) || 0));
+      if (after > 0) nextGifts[product.id] = after;
+      else delete nextGifts[product.id];
+      nextSurtido[product.id] = String(Math.max(0, (Number(surtido[product.id]) || 0) + after - before));
+    }
+    setObsequios(nextGifts);
+    setSurtido(nextSurtido);
+    setGiftOpen(false);
   };
+
+  const previousPaymentPiecesValue = payPreviousDebt
+    ? Math.min(priorDebtPieces, Math.max(0, Math.floor(Number(previousPaymentPieces) || 0)))
+    : 0;
+  const previousPaymentAmountValue = !payPreviousDebt
+    ? 0
+    : priorDebtPieces > 0
+      ? previousPaymentPiecesValue >= priorDebtPieces
+        ? priorDebtAmount
+        : Math.min(priorDebtAmount, Math.round((previousPaymentPiecesValue * priorDebtAmount / priorDebtPieces) * 100) / 100)
+      : Math.min(priorDebtAmount, Math.max(0, Number(previousPaymentAmount) || 0));
 
   const buildSale = (completed: boolean): ClientSale => ({
     completed,
     paymentType,
     existenciaAnterior: Object.fromEntries(products.map((p) => [p.id, Number(existenciaAnterior[p.id] || 0)])),
-    surtido: Object.fromEntries(products.map((p) => [p.id, Number(surtido[p.id] || 0)])),
+    surtido: {
+      ...Object.fromEntries(Object.entries(surtido).map(([id, qty]) => [id, Number(qty || 0)])),
+      ...Object.fromEntries(products.map((p) => [p.id, Number(surtido[p.id] || 0)])),
+    },
     devolucion: Object.fromEntries(products.map((p) => [p.id, Number(devolucion[p.id] || 0)])),
+    obsequios,
     existenciaActual: Object.fromEntries(products.map((p) => [p.id, 0])),
     priceSnapshot: { ...effectivePrices },
     notes: notes.trim() ? notes.trim() : undefined,
+    ...(client?.creditType === "A" ? { collectPreviousDebt: payPreviousDebt } : {}),
     ...(client?.creditType === "A"
       ? {
           previousCreditPayment: {
-            amount: Math.max(0, Number(previousPaymentAmount) || 0),
-            pieces: Math.max(0, Number(previousPaymentPieces) || 0),
+            amount: previousPaymentAmountValue,
+            pieces: previousPaymentPiecesValue,
           },
         }
       : {}),
   });
 
-  const total = clientSaleAmount(buildSale(true), products);
+  const salePreview = buildSale(true);
+  const total = clientSaleAmount(salePreview, allProducts);
+  const previousRouteTotals = cumulativeClientIds.reduce((totals, routeClientId) => {
+    const priorSale = previousRouteVisit?.sales?.[routeClientId];
+    if (priorSale?.completed) {
+      totals.amount += clientSaleAmount(priorSale, allProducts);
+      totals.pieces += clientNetUnits(priorSale);
+    }
+    return totals;
+  }, { amount: 0, pieces: 0 });
+  const currentRouteTotals = cumulativeClientIds.reduce((totals, routeClientId) => {
+    const todaySale = routeClientId === clientId ? salePreview : active.sales[routeClientId];
+    if (todaySale?.completed || routeClientId === clientId) {
+      totals.amount += clientSaleAmount(todaySale, allProducts);
+      totals.pieces += clientNetUnits(todaySale);
+    }
+    return totals;
+  }, { amount: 0, pieces: 0 });
+  const currentVisitAmount = currentRouteTotals.amount;
+  const currentVisitPieces = currentRouteTotals.pieces;
+  const previousVisitAmount = previousRouteTotals.amount;
+  const previousVisitPieces = previousRouteTotals.pieces;
+  const amountDifference = currentVisitAmount - previousVisitAmount;
+  const piecesDifference = currentVisitPieces - previousVisitPieces;
+  const amountPercent = previousVisitAmount > 0 ? (amountDifference / previousVisitAmount) * 100 : null;
+  const piecesPercent = previousVisitPieces > 0 ? (piecesDifference / previousVisitPieces) * 100 : null;
+  const debtAfterPaymentAmount = Math.max(0, priorDebtAmount - previousPaymentAmountValue);
+  const debtAfterPaymentPieces = Math.max(0, priorDebtPieces - previousPaymentPiecesValue);
+  const pendingAfterVisitAmount = Math.max(0, debtAfterPaymentAmount + clientSaleAmount(salePreview, allProducts));
+  const pendingAfterVisitPieces = Math.max(0, debtAfterPaymentPieces + clientNetUnits(salePreview));
 
   const handleSave = (completed: boolean) => {
     actions.saveClientSale(clientId, buildSale(completed));
     onClose();
   };
 
+  const authorizeCreditBalanceEdit = async () => {
+    const authorized = await actions.verifyAdminPassword(adminPassword);
+    if (!authorized) {
+      toast.error("La contraseña de administrador es incorrecta");
+      return;
+    }
+    setAdminPassword("");
+    setAdminPasswordOpen(false);
+    setAdjustmentPieces(String(priorDebtPieces));
+    setAdjustmentAmount(priorDebtAmount.toFixed(2));
+    setAdjustmentNote("");
+    setAdjustmentOpen(true);
+  };
+
   const handleSaveAndPrint = () => {
     const sale = buildSale(true);
     actions.saveClientSale(clientId, sale);
     setReceiptData({
-      client: { name: client.name, address: client.address },
+      client: { name: client.name, address: client.address, creditType: client.creditType },
       sale,
       products,
       date: active.date,
+      ...(client.creditType === "A" ? {
+        creditBalance: {
+          pieces: Math.max(0, priorDebtPieces + clientNetUnits(sale) - (sale.previousCreditPayment?.pieces ?? 0)),
+          amount: Math.max(0, priorDebtAmount + clientSaleAmount(sale, allProducts) - (sale.previousCreditPayment?.amount ?? 0)),
+        },
+      } : {}),
     });
     onClose();
   };
@@ -1001,6 +1152,7 @@ function ClientDialog({
         products.some((p) => Number(existenciaAnterior[p.id] || 0) > 0) ||
         products.some((p) => Number(surtido[p.id] || 0) > 0) ||
         products.some((p) => Number(devolucion[p.id] || 0) > 0) ||
+        Object.values(obsequios).some((qty) => qty > 0) ||
         notes.trim().length > 0 ||
         collectionEdited ||
         existing?.previousCreditPayment != null;
@@ -1024,43 +1176,101 @@ function ClientDialog({
 
         <ClientStatsPanel clientId={client.id} />
 
+        <section className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-sky-700">Comparación con la visita anterior</div>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="rounded-md bg-background/60 px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase text-muted-foreground">Acumulado anterior al llegar al cliente #{client.visitOrder}</div>
+              {previousRouteVisit ? (
+                <>
+                  <div className="font-bold tabular-nums">${previousVisitAmount.toFixed(2)} · {previousVisitPieces} pzas</div>
+                  <div className="text-[10px] text-muted-foreground">Ruta del {new Date(previousRouteVisit.endedAt ?? previousRouteVisit.date).toLocaleDateString("es-MX")}</div>
+                </>
+              ) : <div className="text-xs text-muted-foreground">Sin ruta anterior registrada</div>}
+            </div>
+            <div className="rounded-md bg-background/60 px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase text-muted-foreground">Acumulado actual al cliente #{client.visitOrder}</div>
+              <div className="font-bold tabular-nums">${currentVisitAmount.toFixed(2)} · {currentVisitPieces} pzas</div>
+            </div>
+          </div>
+          {previousRouteVisit && (
+            <div className={`mt-2 rounded-md px-3 py-2 text-xs font-semibold tabular-nums ${amountDifference >= 0 ? "bg-emerald-500/10 text-emerald-700" : "bg-rose-500/10 text-rose-700"}`}>
+              <div>Dinero: {amountDifference >= 0 ? "+" : "−"}${Math.abs(amountDifference).toFixed(2)}{amountPercent == null ? " · % sin referencia" : ` · ${amountPercent >= 0 ? "+" : "−"}${Math.abs(amountPercent).toFixed(1)}%`}</div>
+              <div>Piezas: {piecesDifference >= 0 ? "+" : "−"}{Math.abs(piecesDifference)}{piecesPercent == null ? " pzas · % sin referencia" : ` pzas · ${piecesPercent >= 0 ? "+" : "−"}${Math.abs(piecesPercent).toFixed(1)}%`}</div>
+            </div>
+          )}
+        </section>
+
+        {client.creditType === "B" && !client.chainId && (
+          <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            Esta sucursal tiene crédito tipo B, pero no está asignada a una cadena. La venta no generará movimiento de crédito.
+          </div>
+        )}
+
         {client.creditType === "A" && (
           <section className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Saldo de crédito</div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Saldo anterior</div>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm font-bold tabular-nums">
                   <span>${priorDebtAmount.toFixed(2)} adeudados</span>
                   <span>{priorDebtPieces} piezas pendientes</span>
                 </div>
               </div>
-              <Button type="button" size="sm" variant="outline" onClick={() => setAdjustmentOpen(true)}>
-                Ajustar saldo
+              <Button type="button" size="sm" variant="outline" onClick={() => setAdminPasswordOpen(true)}>
+                Editar saldo anterior
               </Button>
             </div>
             <div>
-              <div className="mb-2 text-xs font-semibold">Cobro de lo anterior</div>
-              <div className="grid grid-cols-2 gap-2">
-                <FieldCell label="Dinero">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold">
+                <input
+                  type="checkbox"
+                  checked={payPreviousDebt}
+                  onChange={(e) => { setPayPreviousDebt(e.target.checked); setCollectionEdited(true); }}
+                  className="h-4 w-4 accent-primary"
+                />
+                ¿Va a pagar piezas del saldo anterior?
+              </label>
+              {payPreviousDebt && priorDebtPieces > 0 && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <FieldCell label="Piezas anteriores a pagar">
+                    <Input
+                      type="number" min={0} max={priorDebtPieces} step={1} inputMode="numeric"
+                      value={previousPaymentPieces}
+                      onChange={(e) => { setPreviousPaymentPieces(e.target.value); setCollectionEdited(true); }}
+                      className="h-9 px-1 text-center" placeholder="0"
+                    />
+                  </FieldCell>
+                  <FieldCell label="Cobro calculado">
+                    <div className="flex h-9 items-center justify-center rounded-md border border-input bg-background text-sm font-bold tabular-nums">
+                      ${previousPaymentAmountValue.toFixed(2)}
+                    </div>
+                  </FieldCell>
+                </div>
+              )}
+              {payPreviousDebt && priorDebtPieces <= 0 && (
+                <FieldCell label="Cobro de deuda anterior">
                   <Input
-                    type="number" min={0} step="0.01" inputMode="decimal"
+                    type="number" min={0} max={priorDebtAmount} step="0.01" inputMode="decimal"
                     value={previousPaymentAmount}
-                    onChange={(e) => updatePreviousPaymentAmount(e.target.value)}
-                    className="h-9 px-1 text-center" placeholder="0.00"
+                    onChange={(e) => { setPreviousPaymentAmount(e.target.value); setCollectionEdited(true); }}
+                    className="mt-1 h-9 px-1 text-center" placeholder="0.00"
                   />
                 </FieldCell>
-                <FieldCell label="Piezas abonadas">
-                  <Input
-                    type="number" min={0} step={1} inputMode="numeric"
-                    value={previousPaymentPieces}
-                    onChange={(e) => { setPreviousPaymentPieces(e.target.value); setCollectionEdited(true); }}
-                    className="h-9 px-1 text-center" placeholder="0"
-                  />
-                </FieldCell>
-              </div>
+              )}
               <p className="mt-1 text-[10px] text-muted-foreground">
-                El dinero se propone por el total adeudado; al cambiarlo, las piezas se estiman con el precio promedio de la deuda.
+                El cobro se calcula según el precio promedio de las piezas pendientes. Las piezas que entregue hoy se suman al nuevo saldo para la siguiente visita.
               </p>
+              <div className="mt-2 rounded-md border border-border/50 bg-background/60 px-3 py-2 text-xs">
+                <div className="flex justify-between gap-2 text-muted-foreground">
+                  <span>Saldo anterior después del pago</span>
+                  <span className="tabular-nums">{debtAfterPaymentPieces} pzas · ${debtAfterPaymentAmount.toFixed(2)}</span>
+                </div>
+                <div className="mt-1 flex justify-between gap-2 font-semibold">
+                  <span>Saldo pendiente con surtido de hoy</span>
+                  <span className="tabular-nums">{pendingAfterVisitPieces} pzas · ${pendingAfterVisitAmount.toFixed(2)}</span>
+                </div>
+              </div>
             </div>
           </section>
         )}
@@ -1089,11 +1299,18 @@ function ClientDialog({
 
 
         <div>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={() => {
+              setGiftDraft(Object.fromEntries(products.map((product) => [product.id, String(obsequios[product.id] ?? "")])));
+              setGiftOpen(true);
+            }}>Obsequio{giftCount > 0 ? ` · ${giftCount} pzas` : ""}</Button>
+            <span className="text-xs text-muted-foreground">Opcional. Se descuenta del inventario, sin cobrarse ni registrarse como devolución.</span>
+          </div>
           <div className="space-y-2">
             {products.map((p) => {
               const sur = Number(surtido[p.id] || 0);
               const dev = Number(devolucion[p.id] || 0);
-              const sold = sur - dev;
+              const sold = sur - (obsequios[p.id] ?? 0) - dev;
               const price = effectivePrices[p.id] ?? p.price;
               const isSpecial = price !== p.price;
               const lineTotal = Math.max(0, sold) * price;
@@ -1225,37 +1442,112 @@ function ClientDialog({
       </DialogContent>
     </Dialog>
 
+    <Dialog open={giftOpen} onOpenChange={setGiftOpen}>
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Productos de obsequio</DialogTitle>
+          <DialogDescription>Indica cuántas piezas de cada producto entregarás gratis. Solo aparecen los tipos de producto habilitados para este cliente.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          {products.map((product) => (
+            <div key={product.id} className="grid grid-cols-[1fr_7rem] items-center gap-3 rounded-lg bg-muted/40 px-3 py-2">
+              <span className="text-sm font-medium">{product.name}</span>
+              <FieldCell label="Obsequio">
+                <Input
+                  type="number" min={0} step={1} inputMode="numeric"
+                  value={giftDraft[product.id] ?? ""}
+                  onChange={(e) => setGiftDraft((prev) => ({ ...prev, [product.id]: e.target.value }))}
+                  className="h-9 px-1 text-center" placeholder="0"
+                />
+              </FieldCell>
+            </div>
+          ))}
+          {products.length === 0 && <p className="text-sm text-muted-foreground">No hay productos habilitados para este cliente.</p>}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setGiftOpen(false)}>Cancelar</Button>
+          <Button type="button" onClick={saveGifts}>Guardar obsequios</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={adminPasswordOpen} onOpenChange={(open) => { setAdminPasswordOpen(open); if (!open) setAdminPassword(""); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Autorizar edición del saldo</DialogTitle>
+          <DialogDescription>Ingresa la contraseña de administrador para cambiar el adeudo anterior de {client.name}.</DialogDescription>
+        </DialogHeader>
+        <div>
+          <Label htmlFor={`admin-credit-password-${clientId}`}>Contraseña de administrador</Label>
+          <Input
+            id={`admin-credit-password-${clientId}`}
+            type="password"
+            autoComplete="current-password"
+            value={adminPassword}
+            onChange={(e) => setAdminPassword(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void authorizeCreditBalanceEdit(); }}
+            className="mt-1"
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setAdminPasswordOpen(false)}>Cancelar</Button>
+          <Button type="button" disabled={!adminPassword} onClick={() => void authorizeCreditBalanceEdit()}>Continuar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <Dialog open={adjustmentOpen} onOpenChange={setAdjustmentOpen}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Ajustar saldo de {client.name}</DialogTitle>
-          <DialogDescription>Usa cantidades positivas para aumentar la deuda y negativas para reducirla.</DialogDescription>
+          <DialogTitle>Editar saldo anterior de {client.name}</DialogTitle>
+          <DialogDescription>Este saldo se hereda de las visitas anteriores. Define cuánto debe quedar antes de registrar la venta de hoy; el nuevo surtido se sumará después.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor={`credit-adjust-pieces-${clientId}`}>Piezas</Label>
-            <Input id={`credit-adjust-pieces-${clientId}`} type="number" step={1} value={adjustmentPieces} onChange={(e) => setAdjustmentPieces(e.target.value)} />
+        <div className="space-y-3">
+          <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            Saldo heredado: <strong className="text-foreground">{priorDebtPieces} pzas · ${priorDebtAmount.toFixed(2)}</strong>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label htmlFor={`credit-adjust-pieces-${clientId}`}>Piezas que debe</Label><Input id={`credit-adjust-pieces-${clientId}`} className="mt-1" type="number" min={0} step={1} value={adjustmentPieces} onChange={(e) => setAdjustmentPieces(e.target.value)} /></div>
+            <div><Label htmlFor={`credit-adjust-amount-${clientId}`}>Monto que debe</Label><Input id={`credit-adjust-amount-${clientId}`} className="mt-1" type="number" min={0} step="0.01" value={adjustmentAmount} onChange={(e) => setAdjustmentAmount(e.target.value)} /></div>
+          </div>
+          <div className="rounded-md border border-border/50 p-2">
+            <Label className="text-[11px]">Calcular monto por precio de producto</Label>
+            <div className="mt-1 flex gap-2">
+              <Select value={adjustmentProductId} onValueChange={setAdjustmentProductId}>
+                <SelectTrigger className="min-w-0 flex-1"><SelectValue placeholder="Producto" /></SelectTrigger>
+                <SelectContent>{allProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · ${(allEffectivePrices[product.id] ?? product.price).toFixed(2)}</SelectItem>)}</SelectContent>
+              </Select>
+              <Button type="button" variant="outline" onClick={() => setAdjustmentAmount(calculatedDebtAmount.toFixed(2))}>Calcular</Button>
+            </div>
           </div>
           <div>
-            <Label htmlFor={`credit-adjust-amount-${clientId}`}>Dinero</Label>
-            <Input id={`credit-adjust-amount-${clientId}`} type="number" step="0.01" value={adjustmentAmount} onChange={(e) => setAdjustmentAmount(e.target.value)} />
-          </div>
-          <div className="col-span-2">
             <Label htmlFor={`credit-adjust-note-${clientId}`}>Nota (opcional)</Label>
-            <Input id={`credit-adjust-note-${clientId}`} value={adjustmentNote} onChange={(e) => setAdjustmentNote(e.target.value)} placeholder="Saldo inicial, corrección..." />
+            <Input id={`credit-adjust-note-${clientId}`} value={adjustmentNote} onChange={(e) => setAdjustmentNote(e.target.value)} placeholder="Motivo del cambio..." />
           </div>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setAdjustmentOpen(false)}>Cancelar</Button>
           <Button
             type="button"
+            disabled={
+              Math.max(0, Math.floor(Number(adjustmentPieces) || 0)) === priorDebtPieces &&
+              Math.round(Math.max(0, Number(adjustmentAmount) || 0) * 100) / 100 === Math.round(priorDebtAmount * 100) / 100
+            }
             onClick={() => {
-              actions.adjustClientCreditBalance(clientId, Number(adjustmentPieces) || 0, Number(adjustmentAmount) || 0, adjustmentNote);
-              setAdjustmentPieces("0"); setAdjustmentAmount("0"); setAdjustmentNote("");
+              const targetPieces = Math.max(0, Math.floor(Number(adjustmentPieces) || 0));
+              const targetAmount = Math.round(Math.max(0, Number(adjustmentAmount) || 0) * 100) / 100;
+              actions.adjustClientCreditBalance(
+                clientId,
+                targetPieces - priorDebtPieces,
+                Math.round((targetAmount - priorDebtAmount) * 100) / 100,
+                adjustmentNote || "Edición autorizada del saldo anterior",
+              );
+              setAdjustmentNote("");
               setAdjustmentOpen(false);
+              toast.success("Saldo anterior actualizado");
             }}
           >
-            Guardar ajuste
+            Guardar saldo
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1394,6 +1686,7 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
                             <th className="py-1 pr-2">Sabor</th>
                             <th className="py-1 px-1 text-right">Ant.</th>
                             <th className="py-1 px-1 text-right">Surt.</th>
+                            <th className="py-1 px-1 text-right">Obseq.</th>
                             <th className="py-1 px-1 text-right">Dev.</th>
                             <th className="py-1 px-1 text-right">Exist.</th>
                             <th className="py-1 px-1 text-right">Vend.</th>
@@ -1406,6 +1699,7 @@ function ClientStatsPanel({ clientId }: { clientId: string }) {
                               <td className="py-1 pr-2 font-medium">{it.name}</td>
                               <td className="py-1 px-1 text-right tabular-nums text-muted-foreground">{it.existenciaAnterior}</td>
                               <td className="py-1 px-1 text-right tabular-nums">{it.surtido}</td>
+                              <td className="py-1 px-1 text-right tabular-nums">{it.obsequios}</td>
                               <td className="py-1 px-1 text-right tabular-nums">{it.devolucion}</td>
                               <td className="py-1 px-1 text-right tabular-nums text-muted-foreground">{it.existenciaActual}</td>
                               <td className="py-1 px-1 text-right font-semibold tabular-nums">{it.qty}</td>
